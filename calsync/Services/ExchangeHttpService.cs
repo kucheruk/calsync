@@ -18,6 +18,9 @@ public class ExchangeHttpService : IDisposable
     private readonly string _domain;
     private readonly string _username;
     private readonly string _password;
+    private readonly string _sendMeetingInvitations;
+    private readonly string _sendMeetingCancellations;
+    private readonly string _defaultTimeZone;
     private bool _disposed = false;
 
     public ExchangeHttpService(IConfiguration configuration)
@@ -29,6 +32,16 @@ public class ExchangeHttpService : IDisposable
         _domain = exchangeConfig["Domain"] ?? "";
         _username = exchangeConfig["Username"] ?? throw new ArgumentException("Username не настроен");
         _password = exchangeConfig["Password"] ?? throw new ArgumentException("Password не настроен");
+        // Настройки уведомлений для календарных операций:
+        // SendToNone - не отправлять уведомления
+        // SendOnlyToAll - отправить только участникам (не сохранять в Отправленных)
+        // SendToAllAndSaveCopy - отправить участникам и сохранить копию в Отправленных
+        _sendMeetingInvitations = exchangeConfig["SendMeetingInvitations"] ?? "SendToAllAndSaveCopy";
+        _sendMeetingCancellations = exchangeConfig["SendMeetingCancellations"] ?? "SendToAllAndSaveCopy";
+
+        // Читаем настройку временной зоны из секции CalSync
+        var calSyncConfig = _configuration.GetSection("CalSync");
+        _defaultTimeZone = calSyncConfig["DefaultTimeZone"] ?? "Europe/Moscow";
 
         // Настраиваем HTTP клиент
         var handler = new HttpClientHandler();
@@ -59,6 +72,8 @@ public class ExchangeHttpService : IDisposable
         Console.WriteLine($"🔄 Инициализация Exchange HTTP Service");
         Console.WriteLine($"🌐 URL: {_serviceUrl}");
         Console.WriteLine($"🔐 Аутентификация: {credentials}");
+        Console.WriteLine($"📧 Уведомления: создание={_sendMeetingInvitations}, удаление={_sendMeetingCancellations}");
+        Console.WriteLine($"🌍 Временная зона по умолчанию: {_defaultTimeZone}");
     }
 
     /// <summary>
@@ -197,6 +212,15 @@ public class ExchangeHttpService : IDisposable
     /// </summary>
     public async Task<string> CreateCalendarEventAsync(CalendarEvent calendarEvent)
     {
+        var createdEvent = await CreateCalendarEventWithDetailsAsync(calendarEvent);
+        return createdEvent.ExchangeId;
+    }
+
+    /// <summary>
+    /// Создать событие календаря и вернуть полную информацию включая ChangeKey
+    /// </summary>
+    public async Task<CalendarEvent> CreateCalendarEventWithDetailsAsync(CalendarEvent calendarEvent)
+    {
         try
         {
             Console.WriteLine($"➕ Создание события через SOAP: {calendarEvent.Summary}");
@@ -209,18 +233,24 @@ public class ExchangeHttpService : IDisposable
 
             Console.WriteLine($"📥 Получен ответ от Exchange ({response.Length} символов)");
 
-            // Пытаемся извлечь ID созданного события
-            var eventId = ExtractEventIdFromResponse(response);
+            // Извлекаем ID и ChangeKey созданного события
+            var (eventId, changeKey) = ExtractEventIdAndChangeKeyFromResponse(response);
 
             if (!string.IsNullOrEmpty(eventId))
             {
                 Console.WriteLine($"✅ Событие создано с ID: {eventId}");
-                return eventId;
+
+                // Обновляем исходное событие
+                calendarEvent.ExchangeId = eventId;
+                calendarEvent.ExchangeChangeKey = changeKey;
+
+                return calendarEvent;
             }
             else if (response.Contains("Success"))
             {
                 Console.WriteLine("✅ Событие создано успешно");
-                return $"EXCHANGE_EVENT_{DateTime.Now:yyyyMMddHHmmss}";
+                calendarEvent.ExchangeId = $"EXCHANGE_EVENT_{DateTime.Now:yyyyMMddHHmmss}";
+                return calendarEvent;
             }
             else
             {
@@ -247,13 +277,27 @@ public class ExchangeHttpService : IDisposable
         content.Headers.Clear();
         content.Headers.Add("Content-Type", "text/xml; charset=utf-8");
 
+        // Добавляем SOAPAction заголовок (может потребоваться для некоторых операций)
+        _httpClient.DefaultRequestHeaders.Remove("SOAPAction");
+        _httpClient.DefaultRequestHeaders.Add("SOAPAction", "\"\"");
+
+        Console.WriteLine($"📤 Отправляем SOAP запрос ({soapRequest.Length} символов)");
+
         var response = await _httpClient.PostAsync(_serviceUrl, content);
         var responseContent = await response.Content.ReadAsStringAsync();
+
+        Console.WriteLine($"📥 Получен HTTP статус: {response.StatusCode}");
+        Console.WriteLine($"📥 Размер ответа: {responseContent.Length} символов");
 
         if (!response.IsSuccessStatusCode)
         {
             Console.WriteLine($"❌ HTTP ошибка: {response.StatusCode}");
             Console.WriteLine($"📝 Ответ: {responseContent}");
+        }
+        else if (responseContent.Contains("s:Fault") || responseContent.Contains("ErrorInvalidRequest"))
+        {
+            Console.WriteLine($"⚠️  SOAP ошибка в ответе:");
+            Console.WriteLine($"📝 Первые 1000 символов: {responseContent.Substring(0, Math.Min(1000, responseContent.Length))}");
         }
 
         return responseContent;
@@ -297,34 +341,45 @@ public class ExchangeHttpService : IDisposable
             return dateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         }
 
-        // Если указана временная зона, обрабатываем ее
-        if (!string.IsNullOrEmpty(timeZone))
+        // Используем указанную временную зону или временную зону по умолчанию из конфигурации
+        var effectiveTimeZone = !string.IsNullOrEmpty(timeZone) ? timeZone : _defaultTimeZone;
+
+        try
         {
+            // Преобразуем названия временных зон
+            var systemTimeZoneId = ConvertIcsTimeZoneToSystem(effectiveTimeZone);
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(systemTimeZoneId);
+
+            // Предполагаем, что время в календарном событии уже в указанной временной зоне
+            var utcTime = TimeZoneInfo.ConvertTimeToUtc(dateTime, tz);
+
+            Console.WriteLine($"🌍 Конвертация времени: {dateTime:HH:mm:ss} ({effectiveTimeZone}) → {utcTime:HH:mm:ss} UTC");
+
+            return utcTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️  Ошибка обработки временной зоны '{effectiveTimeZone}': {ex.Message}");
+
+            // Fallback: используем временную зону по умолчанию из конфигурации
             try
             {
-                // Преобразуем названия временных зон
-                var systemTimeZoneId = ConvertIcsTimeZoneToSystem(timeZone);
-                var tz = TimeZoneInfo.FindSystemTimeZoneById(systemTimeZoneId);
+                var fallbackSystemTimeZoneId = ConvertIcsTimeZoneToSystem(_defaultTimeZone);
+                var fallbackTz = TimeZoneInfo.FindSystemTimeZoneById(fallbackSystemTimeZoneId);
+                var utcTime = TimeZoneInfo.ConvertTimeToUtc(dateTime, fallbackTz);
 
-                // Предполагаем, что время в календарном событии уже в указанной временной зоне
-                var utcTime = TimeZoneInfo.ConvertTimeToUtc(dateTime, tz);
-
-                Console.WriteLine($"🌍 Конвертация времени: {dateTime:HH:mm:ss} ({timeZone}) → {utcTime:HH:mm:ss} UTC");
+                Console.WriteLine($"🔄 Fallback конвертация: {dateTime:HH:mm:ss} ({_defaultTimeZone}) → {utcTime:HH:mm:ss} UTC");
 
                 return utcTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"⚠️  Ошибка обработки временной зоны '{timeZone}': {ex.Message}");
-                // Fallback: добавляем московское время по умолчанию (UTC+3)
-                var moscowTime = dateTime.AddHours(-3);
-                return moscowTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+                // Последний fallback: считаем время локальным и конвертируем в UTC
+                var utc = dateTime.ToUniversalTime();
+                Console.WriteLine($"🔄 Локальная конвертация: {dateTime:HH:mm:ss} → {utc:HH:mm:ss} UTC");
+                return utc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
             }
         }
-
-        // По умолчанию считаем время локальным и конвертируем в UTC
-        var utc = dateTime.ToUniversalTime();
-        return utc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
     }
 
     /// <summary>
@@ -332,7 +387,7 @@ public class ExchangeHttpService : IDisposable
     /// </summary>
     private string ConvertIcsTimeZoneToSystem(string icsTimeZone)
     {
-        return icsTimeZone switch
+        var mapping = icsTimeZone switch
         {
             "Europe/Moscow" => "Russian Standard Time",
             "UTC" => "UTC",
@@ -340,8 +395,21 @@ public class ExchangeHttpService : IDisposable
             "Europe/London" => "GMT Standard Time",
             "America/New_York" => "Eastern Standard Time",
             "America/Los_Angeles" => "Pacific Standard Time",
-            _ => "Russian Standard Time" // Fallback для нашего случая
+            "Europe/Berlin" => "W. Europe Standard Time",
+            "Europe/Paris" => "W. Europe Standard Time",
+            "Asia/Tokyo" => "Tokyo Standard Time",
+            "Australia/Sydney" => "AUS Eastern Standard Time",
+            _ => null // Нет точного соответствия
         };
+
+        // Если есть точное соответствие, возвращаем его
+        if (mapping != null)
+        {
+            return mapping;
+        }
+
+        // Fallback: используем временную зону по умолчанию из конфигурации
+        return ConvertIcsTimeZoneToSystem(_defaultTimeZone);
     }
 
     /// <summary>
@@ -367,7 +435,7 @@ public class ExchangeHttpService : IDisposable
   <soap:Body>
     <CreateItem xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"" 
                 MessageDisposition=""SaveOnly"" 
-                SendMeetingInvitations=""SendToNone"">
+                SendMeetingInvitations=""{_sendMeetingInvitations}"">
       <SavedItemFolderId>
         <t:DistinguishedFolderId Id=""calendar""/>
       </SavedItemFolderId>
@@ -393,16 +461,22 @@ public class ExchangeHttpService : IDisposable
     {
         try
         {
-            var doc = new XmlDocument();
-            doc.LoadXml(response);
-
-            var namespaceManager = new XmlNamespaceManager(doc.NameTable);
-            namespaceManager.AddNamespace("t", "http://schemas.microsoft.com/exchange/services/2006/types");
-            namespaceManager.AddNamespace("m", "http://schemas.microsoft.com/exchange/services/2006/messages");
-
-            var itemIdNode = doc.SelectSingleNode("//t:ItemId", namespaceManager);
-
-            return itemIdNode?.Attributes?["Id"]?.Value ?? "";
+            // Используем XmlReader для извлечения ID
+            using (var stringReader = new System.IO.StringReader(response))
+            using (var xmlReader = System.Xml.XmlReader.Create(stringReader))
+            {
+                while (xmlReader.Read())
+                {
+                    if (xmlReader.NodeType == System.Xml.XmlNodeType.Element && xmlReader.LocalName == "ItemId")
+                    {
+                        var id = xmlReader.GetAttribute("Id");
+                        if (!string.IsNullOrEmpty(id))
+                        {
+                            return id;
+                        }
+                    }
+                }
+            }
         }
         catch
         {
@@ -410,6 +484,40 @@ public class ExchangeHttpService : IDisposable
             var match = System.Text.RegularExpressions.Regex.Match(response, @"Id=""([^""]+)""");
             return match.Success ? match.Groups[1].Value : "";
         }
+
+        return "";
+    }
+
+    /// <summary>
+    /// Извлечь ID и ChangeKey события из ответа для создания
+    /// </summary>
+    private (string Id, string ChangeKey) ExtractEventIdAndChangeKeyFromResponse(string response)
+    {
+        try
+        {
+            using (var stringReader = new System.IO.StringReader(response))
+            using (var xmlReader = System.Xml.XmlReader.Create(stringReader))
+            {
+                while (xmlReader.Read())
+                {
+                    if (xmlReader.NodeType == System.Xml.XmlNodeType.Element && xmlReader.LocalName == "ItemId")
+                    {
+                        var id = xmlReader.GetAttribute("Id");
+                        var changeKey = xmlReader.GetAttribute("ChangeKey");
+                        if (!string.IsNullOrEmpty(id))
+                        {
+                            return (id, changeKey ?? "");
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fallback
+        }
+
+        return ("", "");
     }
 
     /// <summary>
@@ -419,20 +527,30 @@ public class ExchangeHttpService : IDisposable
     {
         try
         {
-            var doc = new XmlDocument();
-            doc.LoadXml(response);
-
-            var namespaceManager = new XmlNamespaceManager(doc.NameTable);
-            namespaceManager.AddNamespace("m", "http://schemas.microsoft.com/exchange/services/2006/messages");
-
-            var errorNode = doc.SelectSingleNode("//m:MessageText", namespaceManager);
-
-            return errorNode?.InnerText ?? "Неизвестная ошибка Exchange";
+            // Используем XmlReader для извлечения ошибки
+            using (var stringReader = new System.IO.StringReader(response))
+            using (var xmlReader = System.Xml.XmlReader.Create(stringReader))
+            {
+                while (xmlReader.Read())
+                {
+                    if (xmlReader.NodeType == System.Xml.XmlNodeType.Element &&
+                        (xmlReader.LocalName == "MessageText" || xmlReader.LocalName == "faultstring"))
+                    {
+                        xmlReader.Read(); // Переходим к тексту
+                        if (xmlReader.NodeType == System.Xml.XmlNodeType.Text)
+                        {
+                            return xmlReader.Value;
+                        }
+                    }
+                }
+            }
         }
         catch
         {
             return "Не удалось извлечь описание ошибки";
         }
+
+        return "Неизвестная ошибка Exchange";
     }
 
     /// <summary>
@@ -440,8 +558,9 @@ public class ExchangeHttpService : IDisposable
     /// </summary>
     private string CreateGetCalendarEventsSoapRequest(DateTime startDate, DateTime endDate)
     {
-        var startTimeUtc = FormatTimeForExchange(startDate, "UTC");
-        var endTimeUtc = FormatTimeForExchange(endDate, "UTC");
+        // Используем правильный формат времени для CalendarView
+        var startTimeUtc = startDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        var endTimeUtc = endDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 
         var soapRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
 <soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance""
@@ -449,12 +568,18 @@ public class ExchangeHttpService : IDisposable
                xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
                xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
   <soap:Header>
-    <t:RequestServerVersion Version=""Exchange2016_SP1"" />
+    <t:RequestServerVersion Version=""Exchange2013_SP1"" />
   </soap:Header>
   <soap:Body>
-    <FindItem Traversal=""Shallow"" xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"">
+    <FindItem xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"" Traversal=""Shallow"">
       <ItemShape>
-        <t:BaseShape>AllProperties</t:BaseShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI=""item:Subject"" />
+          <t:FieldURI FieldURI=""calendar:Start"" />
+          <t:FieldURI FieldURI=""calendar:End"" />
+          <t:FieldURI FieldURI=""item:Body"" />
+        </t:AdditionalProperties>
       </ItemShape>
       <CalendarView StartDate=""{startTimeUtc}"" EndDate=""{endTimeUtc}"" />
       <ParentFolderIds>
@@ -481,13 +606,13 @@ public class ExchangeHttpService : IDisposable
                xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
                xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
   <soap:Header>
-    <t:RequestServerVersion Version=""Exchange2016_SP1"" />
+    <t:RequestServerVersion Version=""Exchange2013_SP1"" />
   </soap:Header>
   <soap:Body>
-    <UpdateItem MessageDisposition=""SaveOnly"" ConflictResolution=""AutoResolve"" xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"">
+    <UpdateItem xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"" MessageDisposition=""SaveOnly"" ConflictResolution=""AutoResolve"" SendMeetingInvitationsOrCancellations=""{_sendMeetingInvitations}"">
       <ItemChanges>
         <t:ItemChange>
-          <t:ItemId Id=""{calendarEvent.ExchangeId}"" />
+          <t:ItemId Id=""{calendarEvent.ExchangeId}"" ChangeKey=""{calendarEvent.ExchangeChangeKey}"" />
           <t:Updates>
             <t:SetItemField>
               <t:FieldURI FieldURI=""item:Subject"" />
@@ -541,10 +666,10 @@ public class ExchangeHttpService : IDisposable
                xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
                xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
   <soap:Header>
-    <t:RequestServerVersion Version=""Exchange2016_SP1"" />
+    <t:RequestServerVersion Version=""Exchange2013_SP1"" />
   </soap:Header>
   <soap:Body>
-    <DeleteItem DeleteType=""HardDelete"" xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"">
+    <DeleteItem xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"" DeleteType=""HardDelete"" SendMeetingCancellations=""{_sendMeetingCancellations}"">
       <ItemIds>
         <t:ItemId Id=""{eventId}"" />
       </ItemIds>
@@ -564,65 +689,88 @@ public class ExchangeHttpService : IDisposable
 
         try
         {
-            // Простой парсинг XML ответа без XmlDocument для избежания проблем
-            var lines = response.Split('\n');
-            CalendarEvent currentEvent = null;
+            Console.WriteLine($"🔍 Парсинг XML ответа ({response.Length} символов)");
 
-            foreach (var line in lines)
+            // Проверяем на ошибки в ответе
+            if (response.Contains("ErrorInvalidRequest") || response.Contains("s:Fault"))
             {
-                var trimmedLine = line.Trim();
+                Console.WriteLine("❌ Обнаружена ошибка в ответе Exchange");
+                return events;
+            }
 
-                if (trimmedLine.Contains("<t:CalendarItem>") || trimmedLine.Contains("<CalendarItem"))
+            // Используем System.Xml для правильного парсинга
+            using (var stringReader = new System.IO.StringReader(response))
+            using (var xmlReader = System.Xml.XmlReader.Create(stringReader))
+            {
+                CalendarEvent currentEvent = null;
+                string currentElementName = "";
+
+                while (xmlReader.Read())
                 {
-                    currentEvent = new CalendarEvent();
-                }
-                else if (currentEvent != null && (trimmedLine.Contains("</t:CalendarItem>") || trimmedLine.Contains("</CalendarItem")))
-                {
-                    if (currentEvent != null && !string.IsNullOrEmpty(currentEvent.ExchangeId))
+                    switch (xmlReader.NodeType)
                     {
-                        events.Add(currentEvent);
-                    }
-                    currentEvent = null;
-                }
-                else if (currentEvent != null)
-                {
-                    // Парсим свойства события
-                    if (trimmedLine.Contains("<t:ItemId") && trimmedLine.Contains("Id=\""))
-                    {
-                        var idStart = trimmedLine.IndexOf("Id=\"") + 4;
-                        var idEnd = trimmedLine.IndexOf("\"", idStart);
-                        if (idEnd > idStart)
-                        {
-                            currentEvent.ExchangeId = trimmedLine.Substring(idStart, idEnd - idStart);
-                        }
-                    }
-                    else if (trimmedLine.StartsWith("<t:Subject>") && trimmedLine.EndsWith("</t:Subject>"))
-                    {
-                        currentEvent.Summary = trimmedLine.Replace("<t:Subject>", "").Replace("</t:Subject>", "").Trim();
-                    }
-                    else if (trimmedLine.StartsWith("<t:Start>") && trimmedLine.EndsWith("</t:Start>"))
-                    {
-                        var timeStr = trimmedLine.Replace("<t:Start>", "").Replace("</t:Start>", "").Trim();
-                        if (DateTime.TryParse(timeStr, out var startTime))
-                        {
-                            currentEvent.Start = startTime;
-                        }
-                    }
-                    else if (trimmedLine.StartsWith("<t:End>") && trimmedLine.EndsWith("</t:End>"))
-                    {
-                        var timeStr = trimmedLine.Replace("<t:End>", "").Replace("</t:End>", "").Trim();
-                        if (DateTime.TryParse(timeStr, out var endTime))
-                        {
-                            currentEvent.End = endTime;
-                        }
+                        case System.Xml.XmlNodeType.Element:
+                            currentElementName = xmlReader.LocalName;
+
+                            if (currentElementName == "CalendarItem")
+                            {
+                                currentEvent = new CalendarEvent();
+                            }
+                            else if (currentElementName == "ItemId" && currentEvent != null)
+                            {
+                                currentEvent.ExchangeId = xmlReader.GetAttribute("Id");
+                                currentEvent.ExchangeChangeKey = xmlReader.GetAttribute("ChangeKey");
+                            }
+                            break;
+
+                        case System.Xml.XmlNodeType.Text:
+                            if (currentEvent != null)
+                            {
+                                switch (currentElementName)
+                                {
+                                    case "Subject":
+                                        currentEvent.Summary = xmlReader.Value;
+                                        break;
+                                    case "Start":
+                                        if (DateTime.TryParse(xmlReader.Value, out var startTime))
+                                        {
+                                            currentEvent.Start = startTime;
+                                        }
+                                        break;
+                                    case "End":
+                                        if (DateTime.TryParse(xmlReader.Value, out var endTime))
+                                        {
+                                            currentEvent.End = endTime;
+                                        }
+                                        break;
+                                    case "Body":
+                                        currentEvent.Description = xmlReader.Value;
+                                        break;
+                                }
+                            }
+                            break;
+
+                        case System.Xml.XmlNodeType.EndElement:
+                            if (xmlReader.LocalName == "CalendarItem" && currentEvent != null)
+                            {
+                                if (!string.IsNullOrEmpty(currentEvent.ExchangeId))
+                                {
+                                    events.Add(currentEvent);
+                                    Console.WriteLine($"✅ Событие найдено: {currentEvent.Summary} ({currentEvent.ExchangeId?.Substring(0, 20)}...)");
+                                }
+                                currentEvent = null;
+                            }
+                            break;
                     }
                 }
             }
+
+            Console.WriteLine($"📊 Всего событий распарсено: {events.Count}");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"❌ Ошибка парсинга событий: {ex.Message}");
-            Console.WriteLine($"📝 Ответ: {response.Substring(0, Math.Min(500, response.Length))}...");
+            Console.WriteLine($"📝 Первые 500 символов ответа: {response.Substring(0, Math.Min(500, response.Length))}...");
         }
 
         return events;

@@ -216,6 +216,7 @@ class Program
                     {
                         Console.WriteLine($"\n✏️ Обновление события: {icsEvent.Summary}");
                         icsEvent.ExchangeId = exchangeEvent.ExchangeId;
+                        icsEvent.ExchangeChangeKey = exchangeEvent.ExchangeChangeKey;
                         var success = await exchangeHttpService.UpdateCalendarEventAsync(icsEvent);
 
                         if (success)
@@ -297,9 +298,10 @@ class Program
             if (string.IsNullOrEmpty(testEvent.ExchangeId))
             {
                 Console.WriteLine("\n1️⃣ Создание тестового события...");
-                var eventId = await exchangeHttpService.CreateCalendarEventAsync(testEvent);
-                testEvent.ExchangeId = eventId;
-                Console.WriteLine($"✅ Событие создано: {eventId?.Substring(0, 20)}...");
+                var createdEvent = await exchangeHttpService.CreateCalendarEventWithDetailsAsync(testEvent);
+                testEvent.ExchangeId = createdEvent.ExchangeId;
+                testEvent.ExchangeChangeKey = createdEvent.ExchangeChangeKey;
+                Console.WriteLine($"✅ Событие создано: {testEvent.ExchangeId?.Substring(0, 20)}...");
             }
             else
             {

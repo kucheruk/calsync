@@ -74,6 +74,11 @@ public class CalendarEvent
     /// Exchange ID события (для работы с EWS)
     /// </summary>
     public string ExchangeId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Exchange ChangeKey события (для обновлений и удаления)
+    /// </summary>
+    public string ExchangeChangeKey { get; set; } = string.Empty;
 }
 
 /// <summary>

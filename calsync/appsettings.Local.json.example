@@ -1,23 +1,38 @@
 {
-    "IcsUrl": "https://your-calendar-url.ics",
+    "IcsUrl": "https://your-ics-calendar-url.ics",
     "Exchange": {
-        "ServiceUrl": "https://exchange.example.com/EWS/Exchange.asmx",
-        "Domain": "example.domain",
+        "ServiceUrl": "https://your-exchange-server/EWS/Exchange.asmx",
+        "Domain": "your-domain",
         "Username": "your-username",
         "Password": "your-password",
         "Version": "Exchange2016_SP1",
         "UseAutodiscover": false,
         "RequestTimeout": 30000,
         "MaxBatchSize": 100,
-        "ValidateSslCertificate": false
+        "ValidateSslCertificate": false,
+        
+        // Настройки уведомлений для календарных операций
+        // Возможные значения:
+        // - "SendToNone" - не отправлять уведомления (для тестирования)
+        // - "SendOnlyToAll" - отправить только участникам
+        // - "SendToAllAndSaveCopy" - отправить участникам + сохранить копию (рекомендуется)
+        "SendMeetingInvitations": "SendToAllAndSaveCopy",
+        "SendMeetingCancellations": "SendToAllAndSaveCopy"
     },
     "CalSync": {
         "LogLevel": "Information",
         "DefaultSyncInterval": 3600,
+        
+        // Временная зона по умолчанию для конвертации времени
+        // Примеры: "Europe/Moscow", "UTC", "America/New_York", "Europe/London"
+        "DefaultTimeZone": "Europe/Moscow",
+        
         "Sync": {
             "DryRun": true,
             "PreserveDuplicates": false,
             "SyncDeletedEvents": true
-        }
+        },
+        "DebugMode": false,
+        "SkipExchangeConnection": false
     }
 } 
