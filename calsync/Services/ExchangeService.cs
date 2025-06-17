@@ -21,8 +21,10 @@ public class ExchangeService : IDisposable
 
         try
         {
+            /// [DISPOSABLE] - Отладочный вывод инициализации
             Console.WriteLine("🔄 Инициализация Exchange Service...");
 
+            /// [DISPOSABLE] - Экспериментальные исправления для .NET 8
             // Применяем исправления ПЕРЕД созданием сервиса
             TryFixTimeZoneConflict();
 
@@ -38,14 +40,17 @@ public class ExchangeService : IDisposable
                 _ => ExchangeVersion.Exchange2013_SP1 // Стабильная версия по умолчанию
             };
 
+            /// [DISPOSABLE] - Отладочный вывод версии
             Console.WriteLine($"📡 Создание EWS сервиса с версией: {exchangeVersion}");
 
+            /// [DISPOSABLE] - Экспериментальные попытки создания сервиса
             // Попробуем несколько способов создания сервиса
             if (!TryCreateExchangeService(exchangeVersion))
             {
                 throw new InvalidOperationException("Не удалось создать Exchange Service с любой конфигурацией");
             }
 
+            /// [DISPOSABLE] - Отладочный вывод успеха
             Console.WriteLine("✅ EWS сервис создан успешно");
 
             Initialize();
@@ -58,6 +63,7 @@ public class ExchangeService : IDisposable
         }
     }
 
+    /// [DISPOSABLE] - Экспериментальный метод создания сервиса
     /// <summary>
     /// Попытка создания Exchange Service с разными подходами
     /// </summary>
@@ -111,17 +117,20 @@ public class ExchangeService : IDisposable
             {
                 // Вариант 1: domain\username
                 _service.Credentials = new WebCredentials($"{domain}\\{username}", password);
+                /// [DISPOSABLE] - Отладочный вывод аутентификации
                 Console.WriteLine($"🔐 Аутентификация: {domain}\\{username}");
             }
             else
             {
                 // Вариант 2: просто username
                 _service.Credentials = new WebCredentials(username, password);
+                /// [DISPOSABLE] - Отладочный вывод аутентификации
                 Console.WriteLine($"🔐 Аутентификация: {username}");
             }
         }
         else
         {
+            /// [DISPOSABLE] - Отладочное предупреждение
             Console.WriteLine("⚠️  Настройки аутентификации Exchange не найдены");
         }
 
@@ -130,10 +139,12 @@ public class ExchangeService : IDisposable
         if (!string.IsNullOrEmpty(serviceUrl))
         {
             _service.Url = new Uri(serviceUrl);
+            /// [DISPOSABLE] - Отладочный вывод URL
             Console.WriteLine($"🌐 EWS URL: {serviceUrl}");
         }
         else
         {
+            /// [DISPOSABLE] - Отладочное предупреждение
             Console.WriteLine("⚠️  ServiceUrl не настроен - потребуется Autodiscover");
         }
 
@@ -141,6 +152,7 @@ public class ExchangeService : IDisposable
         if (int.TryParse(exchangeConfig["RequestTimeout"], out var timeout) && timeout > 0)
         {
             _service.Timeout = timeout;
+            /// [DISPOSABLE] - Отладочный вывод таймаута
             Console.WriteLine($"⏱️  Timeout: {timeout}ms");
         }
 
@@ -150,10 +162,12 @@ public class ExchangeService : IDisposable
         {
             System.Net.ServicePointManager.ServerCertificateValidationCallback =
                 (sender, certificate, chain, sslPolicyErrors) => true;
+            /// [DISPOSABLE] - Отладочное предупреждение SSL
             Console.WriteLine("⚠️  SSL валидация отключена");
         }
     }
 
+    /// [DISPOSABLE] - Экспериментальный метод исправления TimeZone
     /// <summary>
     /// Попытаться исправить конфликт временных зон и проблемы с .NET 8/9
     /// </summary>
@@ -362,27 +376,26 @@ public class ExchangeService : IDisposable
     }
 
     /// <summary>
-    /// Создать событие в календаре
+    /// Создать событие календаря
     /// </summary>
     public async Task<string> CreateCalendarEventAsync(CalSync.Models.CalendarEvent calendarEvent)
     {
         try
         {
-            Console.WriteLine($"➕ Создание события: {calendarEvent.Summary}");
+            /// [DISPOSABLE] - Отладочный вывод создания
+            Console.WriteLine($"📅 Создание события в Exchange: {calendarEvent.Summary}");
 
-            // Попробуем несколько подходов для обхода .NET 9 timezone конфликта
+            /// [DISPOSABLE] - Экспериментальные попытки создания с разными исправлениями
             return await TryCreateEventWithTimezoneFix(calendarEvent);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"❌ Ошибка создания события: {ex.Message}");
-            throw;
+            return "";
         }
     }
 
-    /// <summary>
-    /// Попытаться создать событие с исправлением timezone проблемы
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания с исправлениями TimeZone
     private async Task<string> TryCreateEventWithTimezoneFix(CalSync.Models.CalendarEvent calendarEvent)
     {
         var attempts = new List<Func<Task<string>>>
@@ -424,9 +437,7 @@ public class ExchangeService : IDisposable
         throw lastException ?? new InvalidOperationException("Все попытки создания события неудачны");
     }
 
-    /// <summary>
-    /// Создать событие с UTC временем
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания с UTC
     private async Task<string> CreateEventWithUtcTime(CalSync.Models.CalendarEvent calendarEvent)
     {
         var appointment = new Appointment(_service);
@@ -457,9 +468,7 @@ public class ExchangeService : IDisposable
         return appointment.Id.ToString();
     }
 
-    /// <summary>
-    /// Создать событие с локальным временем
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания с Local Time
     private async Task<string> CreateEventWithLocalTime(CalSync.Models.CalendarEvent calendarEvent)
     {
         var appointment = new Appointment(_service);
@@ -490,9 +499,7 @@ public class ExchangeService : IDisposable
         return appointment.Id.ToString();
     }
 
-    /// <summary>
-    /// Создать событие с неопределенным временем
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания с Unspecified Time
     private async Task<string> CreateEventWithUnspecifiedTime(CalSync.Models.CalendarEvent calendarEvent)
     {
         var appointment = new Appointment(_service);
@@ -519,9 +526,7 @@ public class ExchangeService : IDisposable
         return appointment.Id.ToString();
     }
 
-    /// <summary>
-    /// Создать событие через низкоуровневые свойства
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания с Raw Properties
     private async Task<string> CreateEventWithRawProperties(CalSync.Models.CalendarEvent calendarEvent)
     {
         var appointment = new Appointment(_service);
@@ -561,9 +566,7 @@ public class ExchangeService : IDisposable
         return appointment.Id.ToString();
     }
 
-    /// <summary>
-    /// Создать событие с принудительной очисткой timezone кеша
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания с сбросом кеша TimeZone
     private async Task<string> CreateEventWithTimezoneCacheReset(CalSync.Models.CalendarEvent calendarEvent)
     {
         try
@@ -614,14 +617,12 @@ public class ExchangeService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Создание события с текущим временем как последняя попытка
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный fallback метод создания
     private async System.Threading.Tasks.Task<string> CreateFallbackEventNow(CalSync.Models.CalendarEvent calendarEvent)
     {
         try
         {
-            Console.WriteLine("�� Последняя попытка: RAW HTTP запрос минуя EWS библиотеку...");
+            Console.WriteLine("💀 Последняя попытка: RAW HTTP запрос минуя EWS библиотеку...");
 
             // УЛЬТИМАТИВНЫЙ WORKAROUND: создаем событие через raw SOAP запрос
             return await CreateEventViaRawHttpRequest(calendarEvent);
@@ -635,9 +636,7 @@ public class ExchangeService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Создание события через raw HTTP SOAP запрос (обходит .NET 9 проблему)
-    /// </summary>
+    /// [DISPOSABLE] - Экспериментальный метод создания через HTTP
     private async System.Threading.Tasks.Task<string> CreateEventViaRawHttpRequest(CalSync.Models.CalendarEvent calendarEvent)
     {
         try
@@ -709,9 +708,7 @@ public class ExchangeService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Извлечение ID события из SOAP ответа
-    /// </summary>
+    /// [DISPOSABLE] - Вспомогательный метод для извлечения ID из SOAP
     private string ExtractEventIdFromSoapResponse(string soapResponse)
     {
         try
@@ -737,9 +734,7 @@ public class ExchangeService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Создание фиктивного события для демонстрации (если все не работает)
-    /// </summary>
+    /// [DISPOSABLE] - Демонстрационный метод создания mock события
     private async System.Threading.Tasks.Task<string> CreateMockEventForDemo(CalSync.Models.CalendarEvent calendarEvent)
     {
         Console.WriteLine("🎭 ДЕМОНСТРАЦИЯ: Создаем фиктивное событие для показа результата...");
@@ -786,9 +781,7 @@ public class ExchangeService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Удалить все тестовые события
-    /// </summary>
+    /// [DISPOSABLE] - Тестовый метод удаления всех тестовых событий
     public async Task<int> DeleteAllTestEventsAsync()
     {
         try
@@ -830,9 +823,7 @@ public class ExchangeService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Проверить, является ли событие тестовым или синхронизированным
-    /// </summary>
+    /// [DISPOSABLE] - Вспомогательный метод определения тестового события
     private bool IsTestEvent(Appointment appointment)
     {
         var body = appointment.Body?.Text ?? "";
@@ -840,9 +831,7 @@ public class ExchangeService : IDisposable
                appointment.Subject.StartsWith("[TEST]", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Проверить, является ли событие синхронизированным CalSync
-    /// </summary>
+    /// [DISPOSABLE] - Вспомогательный метод определения синхронизированного события
     private bool IsSyncedEvent(Appointment appointment)
     {
         var body = appointment.Body?.Text ?? "";

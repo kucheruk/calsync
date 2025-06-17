@@ -32,6 +32,7 @@ class Program
 
             Console.WriteLine($"📅 ICS календарь: {icsUrl}");
 
+            /// [DISPOSABLE] - Хардкод периода для тестирования
             // Определяем период синхронизации (расширенный период с 1 июня 2025)
             var startDate = new DateTime(2025, 6, 1);
             var endDate = new DateTime(2025, 6, 30); // Весь июнь для тестирования
@@ -41,6 +42,7 @@ class Program
             var icsParser = new IcsParser();
             using var exchangeHttpService = new ExchangeHttpService(configuration);
 
+            /// [DISPOSABLE] - Тестирование подключения с подробным выводом
             // Тестируем подключение к Exchange через HTTP
             Console.WriteLine("\n🔍 Проверка подключения к Exchange...");
             var connectionResult = await exchangeHttpService.TestConnectionAsync();
@@ -79,6 +81,7 @@ class Program
     {
         try
         {
+            /// [DISPOSABLE] - Демонстрационный вывод для отладки
             Console.WriteLine("\n🔄 Начинаем полный цикл синхронизации...");
             Console.WriteLine("".PadRight(50, '='));
 
@@ -94,6 +97,7 @@ class Program
             Console.WriteLine($"✅ Загружено ICS событий: {icsEvents.Count}");
             Console.WriteLine($"📅 В указанном периоде: {filteredIcsEvents.Count}");
 
+            /// [DISPOSABLE] - Демонстрационный вывод событий с подробностями
             // Показываем найденные ICS события
             if (filteredIcsEvents.Any())
             {
@@ -122,6 +126,7 @@ class Program
 
             Console.WriteLine($"✅ Получено Exchange событий: {exchangeEvents.Count}");
 
+            /// [DISPOSABLE] - Демонстрационный вывод Exchange событий
             // Показываем найденные Exchange события
             if (exchangeEvents.Any())
             {
@@ -136,6 +141,7 @@ class Program
             Console.WriteLine("\n🔄 Анализ различий и синхронизация...");
             await SynchronizeEventsAsync(exchangeHttpService, filteredIcsEvents, exchangeEvents);
 
+            /// [DISPOSABLE] - Закомментированный демонстрационный код
             // Шаг 4: Демонстрируем полный цикл (ОТКЛЮЧЕНО - чтобы не удалять созданные события)
             // await DemonstrateFullSyncCycleAsync(exchangeHttpService, filteredIcsEvents);
 
@@ -175,6 +181,7 @@ class Program
                         !string.IsNullOrEmpty(e.Uid) &&
                         string.Equals(e.Uid, icsEvent.Uid, StringComparison.OrdinalIgnoreCase));
 
+                    /// [DISPOSABLE] - Отладочный вывод
                     if (matchingExchangeEvent != null)
                     {
                         Console.WriteLine($"🔗 Найдено соответствие по UID: {icsEvent.Summary} ↔ {matchingExchangeEvent.Summary}");
@@ -188,6 +195,7 @@ class Program
                         string.Equals(e.Summary?.Trim(), icsEvent.Summary?.Trim(), StringComparison.OrdinalIgnoreCase) &&
                         Math.Abs((e.Start - icsEvent.Start).TotalMinutes) < 30); // 30 минут tolerance
 
+                    /// [DISPOSABLE] - Отладочный вывод
                     if (matchingExchangeEvent != null)
                     {
                         Console.WriteLine($"🔗 Найдено соответствие по названию+времени: {icsEvent.Summary} ↔ {matchingExchangeEvent.Summary}");
@@ -205,35 +213,35 @@ class Program
                 }
             }
 
-            Console.WriteLine($"\n📊 Анализ синхронизации:");
-            Console.WriteLine($"  🔗 Сопоставленных событий: {eventPairs.Count}");
-            Console.WriteLine($"  ➕ Новых для создания в Exchange: {unmatchedIcsEvents.Count}");
-            Console.WriteLine($"  🗑️  Для удаления из Exchange: {unmatchedExchangeEvents.Count}");
+            /// [DISPOSABLE] - Отладочная статистика
+            Console.WriteLine($"\n📊 Анализ сопоставления:");
+            Console.WriteLine($"  🔗 Найдено пар: {eventPairs.Count}");
+            Console.WriteLine($"  ➕ Новых ICS событий: {unmatchedIcsEvents.Count}");
+            Console.WriteLine($"  ➖ Лишних Exchange событий: {unmatchedExchangeEvents.Count}");
 
-            // Создаем новые события в Exchange
+            // Создаем новые события из ICS
             foreach (var icsEvent in unmatchedIcsEvents)
             {
                 try
                 {
-                    Console.WriteLine($"\n➕ Создание события: {icsEvent.Summary}");
-                    var eventId = await exchangeHttpService.CreateCalendarEventAsync(icsEvent);
+                    Console.WriteLine($"➕ Создание нового события: {icsEvent.Summary}");
+                    var createdEvent = await exchangeHttpService.CreateCalendarEventWithDetailsAsync(icsEvent);
 
-                    if (!string.IsNullOrEmpty(eventId))
+                    if (createdEvent != null && !string.IsNullOrEmpty(createdEvent.ExchangeId))
                     {
-                        icsEvent.ExchangeId = eventId;
                         stats.EventsCreated++;
-                        Console.WriteLine($"✅ Событие создано с ID: {eventId.Substring(0, 20)}...");
+                        Console.WriteLine($"✅ Создано: {createdEvent.Summary} (ID: {createdEvent.ExchangeId})");
                     }
                     else
                     {
                         stats.Errors++;
-                        Console.WriteLine($"❌ Не удалось создать событие: {icsEvent.Summary}");
+                        Console.WriteLine($"❌ Ошибка создания: {icsEvent.Summary}");
                     }
                 }
                 catch (Exception ex)
                 {
                     stats.Errors++;
-                    Console.WriteLine($"❌ Ошибка создания события {icsEvent.Summary}: {ex.Message}");
+                    Console.WriteLine($"❌ Исключение при создании {icsEvent.Summary}: {ex.Message}");
                 }
             }
 
@@ -242,105 +250,78 @@ class Program
             {
                 try
                 {
-                    // Проверяем, нужно ли обновление
+                    // Простая проверка изменений
                     var needsUpdate = !string.Equals(icsEvent.Summary, exchangeEvent.Summary, StringComparison.OrdinalIgnoreCase) ||
                                      Math.Abs((icsEvent.Start - exchangeEvent.Start).TotalMinutes) > 5 ||
-                                     Math.Abs((icsEvent.End - exchangeEvent.End).TotalMinutes) > 5;
+                                     Math.Abs((icsEvent.End - exchangeEvent.End).TotalMinutes) > 5 ||
+                                     !string.Equals(icsEvent.Location, exchangeEvent.Location, StringComparison.OrdinalIgnoreCase);
 
                     if (needsUpdate)
                     {
-                        Console.WriteLine($"\n✏️ Обновление события: {icsEvent.Summary}");
+                        Console.WriteLine($"✏️ Обновление события: {icsEvent.Summary}");
+
+                        // Копируем Exchange ID для обновления
                         icsEvent.ExchangeId = exchangeEvent.ExchangeId;
                         icsEvent.ExchangeChangeKey = exchangeEvent.ExchangeChangeKey;
-                        var success = await exchangeHttpService.UpdateCalendarEventAsync(icsEvent);
 
-                        if (success)
+                        var updateResult = await exchangeHttpService.UpdateCalendarEventAsync(icsEvent);
+                        if (updateResult)
                         {
                             stats.EventsUpdated++;
-                            Console.WriteLine("✅ Событие обновлено успешно");
+                            Console.WriteLine($"✅ Обновлено: {icsEvent.Summary}");
                         }
                         else
                         {
                             stats.Errors++;
-                            Console.WriteLine("❌ Не удалось обновить событие");
+                            Console.WriteLine($"❌ Ошибка обновления: {icsEvent.Summary}");
                         }
                     }
                     else
                     {
                         stats.EventsUpToDate++;
-                        Console.WriteLine($"✅ Событие актуально: {icsEvent.Summary}");
+                        Console.WriteLine($"📋 Без изменений: {icsEvent.Summary}");
                     }
                 }
                 catch (Exception ex)
                 {
                     stats.Errors++;
-                    Console.WriteLine($"❌ Ошибка обновления события {icsEvent.Summary}: {ex.Message}");
+                    Console.WriteLine($"❌ Исключение при обновлении {icsEvent.Summary}: {ex.Message}");
                 }
             }
 
-            // Удаляем лишние события из Exchange (только события с меткой CalSync!)
-            var eventsToDelete = unmatchedExchangeEvents.Where(e => e.IsCalSyncEvent).ToList();
-            var eventsToSkip = unmatchedExchangeEvents.Where(e => !e.IsCalSyncEvent).ToList();
-
-            if (eventsToDelete.Any())
+            // НЕ удаляем лишние Exchange события автоматически для безопасности
+            // Только показываем их
+            if (unmatchedExchangeEvents.Any())
             {
-                Console.WriteLine($"\n🗑️  Удаление {eventsToDelete.Count} событий CalSync из Exchange (их нет в ICS календаре):");
-
-                foreach (var evt in eventsToDelete)
+                /// [DISPOSABLE] - Отладочный вывод лишних событий
+                Console.WriteLine($"\n⚠️  Найдены лишние события в Exchange (НЕ удаляются автоматически):");
+                foreach (var evt in unmatchedExchangeEvents.Take(5)) // Показываем первые 5
                 {
-                    try
-                    {
-                        Console.WriteLine($"  🗑️  Удаление: {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm})");
-                        var success = await exchangeHttpService.DeleteCalendarEventAsync(evt.ExchangeId);
-
-                        if (success)
-                        {
-                            stats.EventsDeleted++;
-                            Console.WriteLine($"    ✅ Удалено успешно");
-                        }
-                        else
-                        {
-                            stats.Errors++;
-                            Console.WriteLine($"    ❌ Не удалось удалить");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        stats.Errors++;
-                        Console.WriteLine($"    ❌ Ошибка удаления: {ex.Message}");
-                    }
+                    Console.WriteLine($"  • {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm})");
+                }
+                if (unmatchedExchangeEvents.Count > 5)
+                {
+                    Console.WriteLine($"  ... и еще {unmatchedExchangeEvents.Count - 5} событий");
                 }
             }
 
-            if (eventsToSkip.Any())
-            {
-                Console.WriteLine($"\n⏭️  Пропущено {eventsToSkip.Count} событий без метки CalSync (не наши события):");
-                foreach (var evt in eventsToSkip)
-                {
-                    Console.WriteLine($"  ⏭️  {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm})");
-                    stats.EventsSkipped++;
-                }
-            }
-
-            // Показываем статистику
-            Console.WriteLine($"\n📊 Результаты синхронизации:");
-            Console.WriteLine($"  ✅ Создано: {stats.EventsCreated}");
+            /// [DISPOSABLE] - Демонстрационная статистика
+            Console.WriteLine($"\n📈 Итоговая статистика:");
+            Console.WriteLine($"  ➕ Создано: {stats.EventsCreated}");
             Console.WriteLine($"  ✏️ Обновлено: {stats.EventsUpdated}");
-            Console.WriteLine($"  🗑️ Удалено: {stats.EventsDeleted}");
-            Console.WriteLine($"  ✅ Актуально: {stats.EventsUpToDate}");
-            Console.WriteLine($"  ⏭️ Пропущено: {stats.EventsSkipped}");
+            Console.WriteLine($"  📋 Без изменений: {stats.EventsUpToDate}");
             Console.WriteLine($"  ❌ Ошибок: {stats.Errors}");
-
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Ошибка синхронизации: {ex.Message}");
+            Console.WriteLine($"❌ Критическая ошибка синхронизации: {ex.Message}");
             throw;
         }
     }
 
+    /// [DISPOSABLE] - Демонстрационный метод полного цикла
     /// <summary>
-    /// Демонстрация полного цикла синхронизации
+    /// Демонстрация полного цикла: создание -> чтение -> обновление -> удаление
     /// </summary>
     private static async Task DemonstrateFullSyncCycleAsync(
         ExchangeHttpService exchangeHttpService,
@@ -439,6 +420,7 @@ class Program
         }
     }
 
+    /// [DISPOSABLE] - Структура для демонстрационной статистики
     private class SyncStats
     {
         public int EventsCreated { get; set; }

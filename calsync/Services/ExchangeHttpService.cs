@@ -52,6 +52,7 @@ public class ExchangeHttpService : IDisposable
         if (!validateSsl)
         {
             handler.ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true;
+            /// [DISPOSABLE] - Отладочное предупреждение SSL
             Console.WriteLine("⚠️  SSL валидация отключена");
         }
 
@@ -70,6 +71,7 @@ public class ExchangeHttpService : IDisposable
             _httpClient.Timeout = TimeSpan.FromMilliseconds(timeout);
         }
 
+        /// [DISPOSABLE] - Отладочный вывод инициализации
         Console.WriteLine($"🔄 Инициализация Exchange HTTP Service");
         Console.WriteLine($"🌐 URL: {_serviceUrl}");
         Console.WriteLine($"🔐 Аутентификация: {credentials}");
@@ -84,6 +86,7 @@ public class ExchangeHttpService : IDisposable
     {
         try
         {
+            /// [DISPOSABLE] - Отладочный вывод тестирования
             Console.WriteLine("🔍 Тестирование HTTP подключения к Exchange...");
 
             // Отправляем простой SOAP запрос для получения папки Inbox
@@ -92,16 +95,19 @@ public class ExchangeHttpService : IDisposable
 
             if (response.Contains("Success"))
             {
+                /// [DISPOSABLE] - Отладочный вывод успеха
                 Console.WriteLine("✅ Подключение к Exchange успешно!");
                 return true;
             }
             else if (response.Contains("Unauthorized"))
             {
+                /// [DISPOSABLE] - Отладочный вывод ошибки аутентификации
                 Console.WriteLine("❌ Ошибка аутентификации Exchange");
                 return false;
             }
             else
             {
+                /// [DISPOSABLE] - Отладочный вывод проверки ответа
                 Console.WriteLine("⚠️  Получен ответ от Exchange, проверяем детали...");
                 Console.WriteLine($"📝 Первые 500 символов ответа: {response.Substring(0, Math.Min(500, response.Length))}");
                 return true; // Считаем успешным, если получили любой ответ
@@ -123,21 +129,25 @@ public class ExchangeHttpService : IDisposable
 
         try
         {
+            /// [DISPOSABLE] - Отладочный вывод получения событий
             Console.WriteLine("📅 Получение событий календаря через SOAP...");
 
             var start = startDate ?? DateTime.Today;
             var end = endDate ?? DateTime.Today.AddDays(1);
 
+            /// [DISPOSABLE] - Отладочный вывод периода
             Console.WriteLine($"📅 Период: {start:yyyy-MM-dd} - {end:yyyy-MM-dd}");
 
             var soapRequest = CreateGetCalendarEventsSoapRequest(start, end);
             var response = await SendSoapRequestAsync(soapRequest);
 
+            /// [DISPOSABLE] - Отладочный вывод размера ответа
             Console.WriteLine($"📥 Получен ответ от Exchange ({response.Length} символов)");
 
             // Парсим ответ и извлекаем события
             events = ParseCalendarEventsFromResponse(response);
 
+            /// [DISPOSABLE] - Отладочный вывод количества событий
             Console.WriteLine($"✅ Получено событий: {events.Count}");
         }
         catch (Exception ex)
@@ -155,10 +165,12 @@ public class ExchangeHttpService : IDisposable
     {
         try
         {
+            /// [DISPOSABLE] - Отладочный вывод обновления
             Console.WriteLine($"✏️ Обновление события через SOAP: {calendarEvent.Summary}");
 
             var soapRequest = CreateUpdateEventSoapRequest(calendarEvent);
 
+            /// [DISPOSABLE] - Отладочный вывод дополнительных полей
             // Логируем дополнительные поля для отладки
             Console.WriteLine($"📋 Дополнительные поля для обновления:");
             if (!string.IsNullOrEmpty(calendarEvent.Location))
@@ -174,11 +186,13 @@ public class ExchangeHttpService : IDisposable
 
             if (response.Contains("Success"))
             {
+                /// [DISPOSABLE] - Отладочный вывод успеха обновления
                 Console.WriteLine("✅ Событие обновлено успешно");
                 return true;
             }
             else
             {
+                /// [DISPOSABLE] - Отладочный вывод ошибки обновления
                 Console.WriteLine($"❌ Ошибка обновления: {ExtractErrorFromResponse(response)}");
                 return false;
             }
@@ -197,6 +211,7 @@ public class ExchangeHttpService : IDisposable
     {
         try
         {
+            /// [DISPOSABLE] - Отладочный вывод удаления
             Console.WriteLine($"🗑️ Удаление события через SOAP: {eventId}");
 
             var soapRequest = CreateDeleteEventSoapRequest(eventId);
@@ -204,11 +219,13 @@ public class ExchangeHttpService : IDisposable
 
             if (response.Contains("Success"))
             {
+                /// [DISPOSABLE] - Отладочный вывод успеха удаления
                 Console.WriteLine("✅ Событие удалено успешно");
                 return true;
             }
             else
             {
+                /// [DISPOSABLE] - Отладочный вывод ошибки удаления
                 Console.WriteLine($"❌ Ошибка удаления: {ExtractErrorFromResponse(response)}");
                 return false;
             }
