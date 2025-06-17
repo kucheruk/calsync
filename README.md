@@ -1,4 +1,7 @@
 # CalSync - Утилита синхронизации календарей
+# ⚠️ Warning: This repository is largely AI-generated. Use at your own risk.
+# ⚠️ Я предупредил: Код сгенерирован ИИ, используй на свой страх и риск
+
 
 Утилита командной строки для синхронизации событий из .ics файлов с Microsoft Exchange Server через прямые HTTP/SOAP запросы.
 
