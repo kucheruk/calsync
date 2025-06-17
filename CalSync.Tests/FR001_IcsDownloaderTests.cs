@@ -7,14 +7,13 @@ namespace CalSync.Tests;
 /// <summary>
 /// Тесты для FR-001: Загрузка .ics файлов
 /// </summary>
-public class FR001_IcsDownloaderTests
+public class FR001_IcsDownloaderTests : TestBase
 {
     [Fact]
-    public async Task DownloadIcsFile_ValidHttpUrl_ShouldReturnContent()
+    public void DownloadIcsFile_ValidHttpUrl_ShouldReturnContent()
     {
         // Arrange
-        var url = "http://example.com/calendar.ics";
-        var expectedContent = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR";
+        var url = GetTestUrl("HttpExample");
 
         // Act & Assert
         // Тест должен загрузить .ics файл по HTTP URL
@@ -22,11 +21,10 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_ValidHttpsUrl_ShouldReturnContent()
+    public void DownloadIcsFile_ValidHttpsUrl_ShouldReturnContent()
     {
         // Arrange
-        var url = "https://example.com/calendar.ics";
-        var expectedContent = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR";
+        var url = GetTestUrl("HttpsExample");
 
         // Act & Assert
         // Тест должен загрузить .ics файл по HTTPS URL
@@ -34,12 +32,10 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_WithBasicAuthentication_ShouldAuthenticate()
+    public void DownloadIcsFile_WithBasicAuthentication_ShouldAuthenticate()
     {
         // Arrange
-        var url = "https://example.com/protected/calendar.ics";
-        var username = "testuser";
-        var password = "testpass";
+        var (username, password) = GetTestCredentials();
 
         // Act & Assert
         // Тест должен поддерживать базовую аутентификацию
@@ -48,12 +44,10 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_WithDigestAuthentication_ShouldAuthenticate()
+    public void DownloadIcsFile_WithDigestAuthentication_ShouldAuthenticate()
     {
         // Arrange
-        var url = "https://example.com/digest-protected/calendar.ics";
-        var username = "testuser";
-        var password = "testpass";
+        var (username, password) = GetTestCredentials();
 
         // Act & Assert
         // Тест должен поддерживать digest аутентификацию
@@ -62,11 +56,11 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_WithRedirect_ShouldFollowRedirect()
+    public void DownloadIcsFile_WithRedirect_ShouldFollowRedirect()
     {
         // Arrange
-        var originalUrl = "http://example.com/calendar.ics";
-        var redirectUrl = "https://secure.example.com/calendar.ics";
+        var originalUrl = GetTestUrl("RedirectExample");
+        var redirectUrl = GetTestUrl("HttpsExample");
 
         // Act & Assert
         // Тест должен обрабатывать редиректы (301, 302, 307, 308)
@@ -75,11 +69,10 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_WithTimeout_ShouldRespectTimeout()
+    public void DownloadIcsFile_WithTimeout_ShouldRespectTimeout()
     {
         // Arrange
-        var url = "https://slow-server.example.com/calendar.ics";
-        var timeoutMs = 5000;
+        var (timeoutMs, _, _) = GetTestTimeouts();
 
         // Act & Assert
         // Тест должен применять timeout и выбрасывать исключение при превышении
@@ -88,12 +81,10 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_NetworkError_ShouldRetryWithBackoff()
+    public void DownloadIcsFile_NetworkError_ShouldRetryWithBackoff()
     {
         // Arrange
-        var url = "https://unreliable-server.example.com/calendar.ics";
-        var maxRetries = 3;
-        var baseDelayMs = 1000;
+        var (_, maxRetries, baseDelayMs) = GetTestTimeouts();
 
         // Act & Assert
         // Тест должен повторять запросы с экспоненциальной задержкой
@@ -105,10 +96,9 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_InvalidSslCertificate_ShouldValidateAndReject()
+    public void DownloadIcsFile_InvalidSslCertificate_ShouldValidateAndReject()
     {
         // Arrange
-        var url = "https://self-signed.example.com/calendar.ics";
         var validateSsl = true;
 
         // Act & Assert
@@ -117,10 +107,10 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_ValidSslCertificate_ShouldAccept()
+    public void DownloadIcsFile_ValidSslCertificate_ShouldAccept()
     {
         // Arrange
-        var url = "https://valid-cert.example.com/calendar.ics";
+        var url = GetTestUrl("ValidCertExample");
 
         // Act & Assert
         // Тест должен принимать валидные SSL сертификаты
@@ -128,10 +118,9 @@ public class FR001_IcsDownloaderTests
     }
 
     [Fact]
-    public async Task DownloadIcsFile_DisableSslValidation_ShouldAcceptAnyCertificate()
+    public void DownloadIcsFile_DisableSslValidation_ShouldAcceptAnyCertificate()
     {
         // Arrange
-        var url = "https://self-signed.example.com/calendar.ics";
         var validateSsl = false;
 
         // Act & Assert
@@ -140,11 +129,14 @@ public class FR001_IcsDownloaderTests
     }
 
     [Theory]
-    [InlineData("http://example.com/calendar.ics")]
-    [InlineData("https://example.com/calendar.ics")]
-    [InlineData("https://subdomain.example.com/path/to/calendar.ics")]
-    public async Task DownloadIcsFile_VariousValidUrls_ShouldSucceed(string url)
+    [InlineData("HttpExample")]
+    [InlineData("HttpsExample")]
+    [InlineData("ValidCertExample")]
+    public void DownloadIcsFile_VariousValidUrls_ShouldSucceed(string urlKey)
     {
+        // Arrange
+        var url = GetTestUrl(urlKey);
+
         // Act & Assert
         // Тест должен работать с различными валидными URL
         Assert.True(Uri.IsWellFormedUriString(url, UriKind.Absolute));
@@ -155,7 +147,7 @@ public class FR001_IcsDownloaderTests
     [InlineData("not-a-url")]
     [InlineData("ftp://example.com/calendar.ics")]
     [InlineData("file:///local/calendar.ics")]
-    public async Task DownloadIcsFile_InvalidUrls_ShouldThrowException(string url)
+    public void DownloadIcsFile_InvalidUrls_ShouldThrowException(string url)
     {
         // Act & Assert
         // Тест должен отклонять невалидные URL
@@ -169,5 +161,22 @@ public class FR001_IcsDownloaderTests
                          (url.StartsWith("http://") || url.StartsWith("https://"));
             Assert.False(isValid);
         }
+    }
+
+    [Fact]
+    public void DownloadIcsFile_RealICloudCalendar_ShouldHandleWebcalProtocol()
+    {
+        // Arrange
+        var webcalUrl = GetTestUrl("RealICloudCalendar");
+        var httpsUrl = GetTestUrl("HttpsICloudCalendar");
+
+        // Act & Assert
+        // Тест должен обрабатывать webcal:// протокол, конвертируя в https://
+        Assert.StartsWith("webcal://", webcalUrl);
+        Assert.StartsWith("https://", httpsUrl);
+
+        // Проверяем, что URL содержит правильный домен iCloud
+        Assert.Contains("p67-caldav.icloud.com", webcalUrl);
+        Assert.Contains("p67-caldav.icloud.com", httpsUrl);
     }
 }
