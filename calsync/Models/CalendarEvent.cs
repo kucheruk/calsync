@@ -69,6 +69,11 @@ public class CalendarEvent
     /// Правило повторения (RRULE)
     /// </summary>
     public string RecurrenceRule { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Exchange ID события (для работы с EWS)
+    /// </summary>
+    public string ExchangeId { get; set; } = string.Empty;
 }
 
 /// <summary>

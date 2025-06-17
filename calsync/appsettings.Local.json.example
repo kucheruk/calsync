@@ -1,0 +1,22 @@
+{
+    "Exchange": {
+        "ServiceUrl": "https://exchange.example.com/EWS/Exchange.asmx",
+        "Domain": "example.domain",
+        "Username": "your-username",
+        "Password": "your-password",
+        "Version": "Exchange2016_SP1",
+        "UseAutodiscover": false,
+        "RequestTimeout": 30000,
+        "MaxBatchSize": 100,
+        "ValidateSslCertificate": false
+    },
+    "CalSync": {
+        "LogLevel": "Information",
+        "DefaultSyncInterval": 3600,
+        "Sync": {
+            "DryRun": true,
+            "PreserveDuplicates": false,
+            "SyncDeletedEvents": true
+        }
+    }
+} 

@@ -1,4 +1,5 @@
 ﻿using CalSync.Services;
+using CalSync.Models;
 using Microsoft.Extensions.Configuration;
 
 namespace CalSync;
@@ -7,8 +8,8 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        Console.WriteLine("CalSync - Тестирование загрузки и парсинга календаря");
-        Console.WriteLine("=================================================");
+        Console.WriteLine("CalSync - Тестирование Exchange Web Services");
+        Console.WriteLine("===========================================");
 
         try
         {
@@ -16,109 +17,171 @@ class Program
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(Directory.GetCurrentDirectory())
                 .AddJsonFile("appsettings.json", optional: true)
-                .AddJsonFile("appsettings.Development.json", optional: true)
+                .AddJsonFile("appsettings.Local.json", optional: true)
                 .Build();
 
-            // Получаем URL календаря из конфигурации
-            var calendarUrl = configuration["TestUrls:RealICloudCalendar"];
-            if (string.IsNullOrEmpty(calendarUrl))
+            // Создаем Exchange сервис
+            using var exchangeService = new CalSync.Services.ExchangeService(configuration);
+
+            // Тестируем подключение
+            Console.WriteLine("\n🔍 Тестирование подключения к Exchange...");
+            var connectionResult = await exchangeService.TestConnectionAsync();
+
+            if (!connectionResult)
             {
-                Console.WriteLine("❌ URL календаря не найден в конфигурации");
+                Console.WriteLine("❌ Не удалось подключиться к Exchange. Проверьте настройки.");
                 return;
             }
 
-            Console.WriteLine($"📅 Загружаем календарь: {calendarUrl}");
-
-            // Создаем сервисы
-            var downloader = new IcsDownloader();
-            var parser = new IcsParser();
-
-            // Загружаем календарь
-            Console.WriteLine("⬇️  Скачиваем календарь...");
-            var icsContent = await downloader.DownloadAsync(calendarUrl);
-            Console.WriteLine($"✅ Загружено {icsContent.Length} символов");
-
-            // Парсим события
-            Console.WriteLine("🔍 Парсим события...");
-            var events = parser.Parse(icsContent);
-            Console.WriteLine($"✅ Найдено событий: {events.Count}");
-
-            if (events.Count == 0)
+            // Показываем меню
+            while (true)
             {
-                Console.WriteLine("⚠️  События не найдены");
-                return;
-            }
+                Console.WriteLine("\n📋 Выберите действие:");
+                Console.WriteLine("1. Показать события календаря");
+                Console.WriteLine("2. Создать тестовое событие");
+                Console.WriteLine("3. Удалить все тестовые события");
+                Console.WriteLine("4. Выход");
+                Console.Write("Ваш выбор: ");
 
-            // Выводим все события
-            Console.WriteLine("\n📋 Список всех событий:");
-            Console.WriteLine("".PadRight(80, '='));
+                var choice = Console.ReadLine();
 
-            for (int i = 0; i < events.Count; i++)
-            {
-                var evt = events[i];
-                Console.WriteLine($"{i + 1:D2}. {evt.Summary}");
-                Console.WriteLine($"    📅 Дата: {evt.Start:yyyy-MM-dd HH:mm:ss} - {evt.End:yyyy-MM-dd HH:mm:ss}");
-                Console.WriteLine($"    🌍 Временная зона: {(string.IsNullOrEmpty(evt.TimeZone) ? "не указана" : evt.TimeZone)}");
-                Console.WriteLine($"    🆔 UID: {evt.Uid}");
-                if (!string.IsNullOrEmpty(evt.Location))
-                    Console.WriteLine($"    📍 Место: {evt.Location}");
-                if (!string.IsNullOrEmpty(evt.Description))
-                    Console.WriteLine($"    📝 Описание: {evt.Description}");
-                Console.WriteLine($"    📊 Статус: {evt.Status}");
-                Console.WriteLine();
-            }
-
-            // Ищем тестовое событие
-            Console.WriteLine("🔍 Поиск тестового события 'test' 19 июня 2025 года...");
-            var testEvent = events.FirstOrDefault(e =>
-                e.Summary.Equals("test", StringComparison.OrdinalIgnoreCase) &&
-                e.Start.Year == 2025 &&
-                e.Start.Month == 6 &&
-                e.Start.Day == 19);
-
-            if (testEvent != null)
-            {
-                Console.WriteLine("🎉 ТЕСТОВОЕ СОБЫТИЕ НАЙДЕНО!");
-                Console.WriteLine($"   📅 Название: {testEvent.Summary}");
-                Console.WriteLine($"   🕐 Время: {testEvent.Start:yyyy-MM-dd HH:mm:ss} (Kind: {testEvent.Start.Kind})");
-                Console.WriteLine($"   🌍 Временная зона: {testEvent.TimeZone}");
-
-                // Проверяем время
-                Console.WriteLine($"   ⏰ Час: {testEvent.Start.Hour}, Минута: {testEvent.Start.Minute}");
-
-                // Анализируем время
-                if (testEvent.Start.Hour == 10 && testEvent.Start.Minute == 15)
+                switch (choice)
                 {
-                    Console.WriteLine("   ✅ Время соответствует ожидаемому: 10:15 (MSK время)");
+                    case "1":
+                        await ShowCalendarEvents(exchangeService);
+                        break;
+                    case "2":
+                        await CreateTestEvent(exchangeService);
+                        break;
+                    case "3":
+                        await DeleteTestEvents(exchangeService);
+                        break;
+                    case "4":
+                        Console.WriteLine("👋 До свидания!");
+                        return;
+                    default:
+                        Console.WriteLine("❌ Неверный выбор. Попробуйте снова.");
+                        break;
                 }
-                else if (testEvent.Start.Hour == 7 && testEvent.Start.Minute == 15)
-                {
-                    Console.WriteLine("   ✅ Время соответствует ожидаемому: 07:15 (UTC время, что равно 10:15 MSK)");
-                }
-                else
-                {
-                    Console.WriteLine($"   ⚠️  Время не соответствует ожидаемому. Ожидалось: 10:15 MSK или 07:15 UTC");
-                }
-            }
-            else
-            {
-                Console.WriteLine("❌ Тестовое событие не найдено!");
-                Console.WriteLine("   Проверьте, что в календаре есть событие:");
-                Console.WriteLine("   - Название: 'test'");
-                Console.WriteLine("   - Дата: 19 июня 2025 года");
-                Console.WriteLine("   - Время: 10:15 MSK");
-            }
 
-            // Очистка ресурсов
-            downloader.Dispose();
+                Console.WriteLine("\nНажмите любую клавишу для продолжения...");
+                Console.ReadKey();
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Ошибка: {ex.Message}");
+            Console.WriteLine($"❌ Критическая ошибка: {ex.Message}");
             Console.WriteLine($"📝 Детали: {ex}");
         }
+    }
 
-        Console.WriteLine("\n🏁 Нажмите любую клавишу для выхода...");
-        Console.ReadKey();
+    /// <summary>
+    /// Показать события календаря
+    /// </summary>
+    private static async Task ShowCalendarEvents(CalSync.Services.ExchangeService exchangeService)
+    {
+        try
+        {
+            Console.WriteLine("\n📅 Получение событий календаря...");
+
+            var events = await exchangeService.GetCalendarEventsAsync();
+
+            if (events.Count == 0)
+            {
+                Console.WriteLine("📭 События не найдены.");
+                return;
+            }
+
+            Console.WriteLine($"\n📋 Найдено событий: {events.Count}");
+            Console.WriteLine("".PadRight(80, '='));
+
+            for (int i = 0; i < Math.Min(events.Count, 10); i++) // Показываем максимум 10 событий
+            {
+                var evt = events[i];
+                Console.WriteLine($"{i + 1:D2}. {evt.Summary}");
+                Console.WriteLine($"    📅 Дата: {evt.Start:yyyy-MM-dd HH:mm} - {evt.End:yyyy-MM-dd HH:mm}");
+                if (!string.IsNullOrEmpty(evt.Location))
+                    Console.WriteLine($"    📍 Место: {evt.Location}");
+                Console.WriteLine($"    🆔 ID: {evt.ExchangeId}");
+
+                // Проверяем, тестовое ли это событие
+                if (evt.Description.Contains("[CalSync-Test-Event-") || evt.Summary.StartsWith("[TEST]"))
+                {
+                    Console.WriteLine($"    🧪 ТЕСТОВОЕ СОБЫТИЕ");
+                }
+
+                Console.WriteLine();
+            }
+
+            if (events.Count > 10)
+            {
+                Console.WriteLine($"... и еще {events.Count - 10} событий");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка получения событий: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Создать тестовое событие
+    /// </summary>
+    private static async Task CreateTestEvent(CalSync.Services.ExchangeService exchangeService)
+    {
+        try
+        {
+            Console.WriteLine("\n➕ Создание тестового события...");
+
+            var testEvent = new CalendarEvent
+            {
+                Summary = $"[TEST] CalSync тест - {DateTime.Now:yyyy-MM-dd HH:mm}",
+                Description = "Тестовое событие, созданное CalSync для проверки работы с Exchange",
+                Start = DateTime.Now.AddHours(1),
+                End = DateTime.Now.AddHours(2),
+                Location = "Тестовая локация"
+            };
+
+            var eventId = await exchangeService.CreateCalendarEventAsync(testEvent);
+            Console.WriteLine($"✅ Тестовое событие создано с ID: {eventId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка создания события: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Удалить все тестовые события
+    /// </summary>
+    private static async Task DeleteTestEvents(CalSync.Services.ExchangeService exchangeService)
+    {
+        try
+        {
+            Console.WriteLine("\n🗑️  Удаление тестовых событий...");
+            Console.Write("Вы уверены, что хотите удалить все тестовые события? (y/N): ");
+
+            var confirmation = Console.ReadLine();
+            if (confirmation?.ToLower() != "y" && confirmation?.ToLower() != "yes")
+            {
+                Console.WriteLine("❌ Удаление отменено.");
+                return;
+            }
+
+            var deletedCount = await exchangeService.DeleteAllTestEventsAsync();
+
+            if (deletedCount > 0)
+            {
+                Console.WriteLine($"✅ Удалено тестовых событий: {deletedCount}");
+            }
+            else
+            {
+                Console.WriteLine("📭 Тестовые события не найдены.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка удаления событий: {ex.Message}");
+        }
     }
 }
