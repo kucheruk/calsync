@@ -351,4 +351,9 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 .idea/
-*.sln.iml 
+*.sln.iml
+
+# Local development configuration (contains real URLs and credentials)
+appsettings.Development.json
+CalSync.Tests/appsettings.Development.json
+calsync/appsettings.Development.json 

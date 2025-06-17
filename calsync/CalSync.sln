@@ -5,7 +5,7 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "calsync", "calsync.csproj", "{378ADAAF-5F36-4412-BCA7-8F2E1A6EE754}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CalSync.Tests", "CalSync.Tests\CalSync.Tests.csproj", "{820A1C9E-84B1-4395-934B-3637953BF118}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CalSync.Tests", "..\CalSync.Tests\CalSync.Tests.csproj", "{820A1C9E-84B1-4395-934B-3637953BF118}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
