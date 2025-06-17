@@ -32,10 +32,9 @@ class Program
 
             Console.WriteLine($"📅 ICS календарь: {icsUrl}");
 
-            // Определяем период синхронизации (фокус на 19 июня 2025)
-            var targetDate = new DateTime(2025, 6, 19);
-            var startDate = targetDate.Date;
-            var endDate = targetDate.Date.AddDays(1);
+            // Определяем период синхронизации (расширенный период с 1 июня 2025)
+            var startDate = new DateTime(2025, 6, 1);
+            var endDate = new DateTime(2025, 6, 30); // Весь июнь для тестирования
 
             // Создаем сервисы
             using var icsDownloader = new IcsDownloader();
@@ -88,9 +87,9 @@ class Program
             var icsContent = await icsDownloader.DownloadAsync(icsUrl);
             var icsEvents = icsParser.Parse(icsContent);
 
-            // Фильтруем события по периоду
+            // Фильтруем события по периоду (включая конечную дату)
             var filteredIcsEvents = icsEvents.Where(e =>
-                e.Start.Date >= startDate.Date && e.Start.Date < endDate.Date).ToList();
+                e.Start.Date >= startDate.Date && e.Start.Date <= endDate.Date).ToList();
 
             Console.WriteLine($"✅ Загружено ICS событий: {icsEvents.Count}");
             Console.WriteLine($"📅 В указанном периоде: {filteredIcsEvents.Count}");
@@ -99,9 +98,21 @@ class Program
             if (filteredIcsEvents.Any())
             {
                 Console.WriteLine("\n📋 События из ICS календаря:");
-                foreach (var evt in filteredIcsEvents)
+                foreach (var icsEvent in filteredIcsEvents)
                 {
-                    Console.WriteLine($"  • {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm}) - {evt.TimeZone}");
+                    Console.WriteLine($"  • {icsEvent.Summary} ({icsEvent.Start:yyyy-MM-dd HH:mm}) - {icsEvent.TimeZone}");
+
+                    // Дополнительная информация для отладки
+                    if (!string.IsNullOrEmpty(icsEvent.Location))
+                        Console.WriteLine($"    📍 Место: {icsEvent.Location}");
+                    if (!string.IsNullOrEmpty(icsEvent.Organizer))
+                        Console.WriteLine($"    👤 Организатор: {icsEvent.Organizer}");
+                    if (icsEvent.Attendees.Any())
+                        Console.WriteLine($"    👥 Участники: {string.Join(", ", icsEvent.Attendees)}");
+                    if (!string.IsNullOrEmpty(icsEvent.Url))
+                        Console.WriteLine($"    🔗 URL: {icsEvent.Url}");
+                    if (!string.IsNullOrEmpty(icsEvent.Description))
+                        Console.WriteLine($"    📝 Описание: {icsEvent.Description}");
                 }
             }
 
@@ -125,8 +136,8 @@ class Program
             Console.WriteLine("\n🔄 Анализ различий и синхронизация...");
             await SynchronizeEventsAsync(exchangeHttpService, filteredIcsEvents, exchangeEvents);
 
-            // Шаг 4: Демонстрируем полный цикл
-            await DemonstrateFullSyncCycleAsync(exchangeHttpService, filteredIcsEvents);
+            // Шаг 4: Демонстрируем полный цикл (ОТКЛЮЧЕНО - чтобы не удалять созданные события)
+            // await DemonstrateFullSyncCycleAsync(exchangeHttpService, filteredIcsEvents);
 
         }
         catch (Exception ex)
@@ -148,16 +159,40 @@ class Program
 
         try
         {
-            // Сопоставляем события по заголовку и времени
+            // Сопоставляем события по UID (правильный подход)
             var eventPairs = new List<(CalendarEvent ics, CalendarEvent exchange)>();
             var unmatchedIcsEvents = new List<CalendarEvent>();
             var unmatchedExchangeEvents = new List<CalendarEvent>(exchangeEvents);
 
             foreach (var icsEvent in icsEvents)
             {
-                var matchingExchangeEvent = exchangeEvents.FirstOrDefault(e =>
-                    string.Equals(e.Summary?.Trim(), icsEvent.Summary?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                    Math.Abs((e.Start - icsEvent.Start).TotalMinutes) < 30); // 30 минут tolerance для разных временных зон
+                CalendarEvent? matchingExchangeEvent = null;
+
+                // Приоритет 1: Поиск по UID (правильный подход для календарей)
+                if (!string.IsNullOrEmpty(icsEvent.Uid))
+                {
+                    matchingExchangeEvent = exchangeEvents.FirstOrDefault(e =>
+                        !string.IsNullOrEmpty(e.Uid) &&
+                        string.Equals(e.Uid, icsEvent.Uid, StringComparison.OrdinalIgnoreCase));
+
+                    if (matchingExchangeEvent != null)
+                    {
+                        Console.WriteLine($"🔗 Найдено соответствие по UID: {icsEvent.Summary} ↔ {matchingExchangeEvent.Summary}");
+                    }
+                }
+
+                // Приоритет 2: Fallback - поиск по названию и времени (для событий без UID)
+                if (matchingExchangeEvent == null)
+                {
+                    matchingExchangeEvent = exchangeEvents.FirstOrDefault(e =>
+                        string.Equals(e.Summary?.Trim(), icsEvent.Summary?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                        Math.Abs((e.Start - icsEvent.Start).TotalMinutes) < 30); // 30 минут tolerance
+
+                    if (matchingExchangeEvent != null)
+                    {
+                        Console.WriteLine($"🔗 Найдено соответствие по названию+времени: {icsEvent.Summary} ↔ {matchingExchangeEvent.Summary}");
+                    }
+                }
 
                 if (matchingExchangeEvent != null)
                 {
@@ -243,15 +278,46 @@ class Program
                 }
             }
 
-            // Удаляем лишние события из Exchange (осторожно!)
-            if (unmatchedExchangeEvents.Any())
-            {
-                Console.WriteLine($"\n⚠️  Найдено {unmatchedExchangeEvents.Count} событий в Exchange, которых нет в ICS календаре");
-                Console.WriteLine("⚠️  Удаление отключено для безопасности. Проверьте события вручную:");
+            // Удаляем лишние события из Exchange (только события с меткой CalSync!)
+            var eventsToDelete = unmatchedExchangeEvents.Where(e => e.IsCalSyncEvent).ToList();
+            var eventsToSkip = unmatchedExchangeEvents.Where(e => !e.IsCalSyncEvent).ToList();
 
-                foreach (var evt in unmatchedExchangeEvents)
+            if (eventsToDelete.Any())
+            {
+                Console.WriteLine($"\n🗑️  Удаление {eventsToDelete.Count} событий CalSync из Exchange (их нет в ICS календаре):");
+
+                foreach (var evt in eventsToDelete)
                 {
-                    Console.WriteLine($"  🗑️  {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm})");
+                    try
+                    {
+                        Console.WriteLine($"  🗑️  Удаление: {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm})");
+                        var success = await exchangeHttpService.DeleteCalendarEventAsync(evt.ExchangeId);
+
+                        if (success)
+                        {
+                            stats.EventsDeleted++;
+                            Console.WriteLine($"    ✅ Удалено успешно");
+                        }
+                        else
+                        {
+                            stats.Errors++;
+                            Console.WriteLine($"    ❌ Не удалось удалить");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        stats.Errors++;
+                        Console.WriteLine($"    ❌ Ошибка удаления: {ex.Message}");
+                    }
+                }
+            }
+
+            if (eventsToSkip.Any())
+            {
+                Console.WriteLine($"\n⏭️  Пропущено {eventsToSkip.Count} событий без метки CalSync (не наши события):");
+                foreach (var evt in eventsToSkip)
+                {
+                    Console.WriteLine($"  ⏭️  {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm})");
                     stats.EventsSkipped++;
                 }
             }
@@ -260,6 +326,7 @@ class Program
             Console.WriteLine($"\n📊 Результаты синхронизации:");
             Console.WriteLine($"  ✅ Создано: {stats.EventsCreated}");
             Console.WriteLine($"  ✏️ Обновлено: {stats.EventsUpdated}");
+            Console.WriteLine($"  🗑️ Удалено: {stats.EventsDeleted}");
             Console.WriteLine($"  ✅ Актуально: {stats.EventsUpToDate}");
             Console.WriteLine($"  ⏭️ Пропущено: {stats.EventsSkipped}");
             Console.WriteLine($"  ❌ Ошибок: {stats.Errors}");

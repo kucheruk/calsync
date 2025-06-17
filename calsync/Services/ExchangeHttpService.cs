@@ -1,5 +1,6 @@
 using CalSync.Models;
 using Microsoft.Extensions.Configuration;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Xml;
@@ -157,6 +158,18 @@ public class ExchangeHttpService : IDisposable
             Console.WriteLine($"✏️ Обновление события через SOAP: {calendarEvent.Summary}");
 
             var soapRequest = CreateUpdateEventSoapRequest(calendarEvent);
+
+            // Логируем дополнительные поля для отладки
+            Console.WriteLine($"📋 Дополнительные поля для обновления:");
+            if (!string.IsNullOrEmpty(calendarEvent.Location))
+                Console.WriteLine($"  📍 Место: {calendarEvent.Location}");
+            if (!string.IsNullOrEmpty(calendarEvent.Organizer))
+                Console.WriteLine($"  👤 Организатор: {calendarEvent.Organizer}");
+            if (calendarEvent.Attendees.Any())
+                Console.WriteLine($"  👥 Участники: {string.Join(", ", calendarEvent.Attendees)}");
+            if (!string.IsNullOrEmpty(calendarEvent.Url))
+                Console.WriteLine($"  🔗 URL: {calendarEvent.Url}");
+
             var response = await SendSoapRequestAsync(soapRequest);
 
             if (response.Contains("Success"))
@@ -227,6 +240,17 @@ public class ExchangeHttpService : IDisposable
 
             // Создаем SOAP запрос для создания события
             var soapRequest = CreateEventSoapRequest(calendarEvent);
+
+            // Логируем дополнительные поля для отладки
+            Console.WriteLine($"📋 Дополнительные поля события:");
+            if (!string.IsNullOrEmpty(calendarEvent.Location))
+                Console.WriteLine($"  📍 Место: {calendarEvent.Location}");
+            if (!string.IsNullOrEmpty(calendarEvent.Organizer))
+                Console.WriteLine($"  👤 Организатор: {calendarEvent.Organizer}");
+            if (calendarEvent.Attendees.Any())
+                Console.WriteLine($"  👥 Участники: {string.Join(", ", calendarEvent.Attendees)}");
+            if (!string.IsNullOrEmpty(calendarEvent.Url))
+                Console.WriteLine($"  🔗 URL: {calendarEvent.Url}");
 
             Console.WriteLine("📤 Отправка SOAP запроса...");
             var response = await SendSoapRequestAsync(soapRequest);
@@ -424,34 +448,87 @@ public class ExchangeHttpService : IDisposable
         Console.WriteLine($"🕒 Исходное время: {calendarEvent.Start:yyyy-MM-dd HH:mm:ss} (TimeZone: {calendarEvent.TimeZone ?? "не указана"})");
         Console.WriteLine($"🕒 Время для Exchange: {startTime}");
 
-        return $@"<?xml version=""1.0"" encoding=""utf-8""?>
+        // Основной SOAP запрос
+        var soapRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
 <soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance""
                xmlns:xsd=""http://www.w3.org/2001/XMLSchema""
                xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
-               xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
+               xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types""
+               xmlns:m=""http://schemas.microsoft.com/exchange/services/2006/messages"">
   <soap:Header>
-    <t:RequestServerVersion Version=""Exchange2013_SP1"" />
+    <t:RequestServerVersion Version=""Exchange2010"" />
   </soap:Header>
   <soap:Body>
-    <CreateItem xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"" 
-                MessageDisposition=""SaveOnly"" 
-                SendMeetingInvitations=""{_sendMeetingInvitations}"">
-      <SavedItemFolderId>
-        <t:DistinguishedFolderId Id=""calendar""/>
-      </SavedItemFolderId>
-      <Items>
+    <m:CreateItem SendMeetingInvitations=""SendToNone"">
+      <m:Items>
         <t:CalendarItem>
-          <t:Subject>{System.Security.SecurityElement.Escape(calendarEvent.Summary)}</t:Subject>
+          <t:Subject>{System.Security.SecurityElement.Escape(calendarEvent.Summary ?? "")}</t:Subject>
           <t:Body BodyType=""Text"">{System.Security.SecurityElement.Escape(calendarEvent.Description ?? "")}</t:Body>
           <t:Start>{startTime}</t:Start>
           <t:End>{endTime}</t:End>
-          <t:Location>{System.Security.SecurityElement.Escape(calendarEvent.Location ?? "")}</t:Location>
-          <t:LegacyFreeBusyStatus>Busy</t:LegacyFreeBusyStatus>
+          <t:Location>{System.Security.SecurityElement.Escape(calendarEvent.Location ?? "")}</t:Location>";
+
+        // Добавляем организатора
+        if (!string.IsNullOrEmpty(calendarEvent.Organizer))
+        {
+            soapRequest += $@"
+          <t:Organizer>
+            <t:Mailbox>
+              <t:EmailAddress>{System.Security.SecurityElement.Escape(calendarEvent.Organizer)}</t:EmailAddress>
+            </t:Mailbox>
+          </t:Organizer>";
+        }
+
+        // Добавляем участников
+        if (calendarEvent.Attendees.Any())
+        {
+            soapRequest += @"
+          <t:RequiredAttendees>";
+            foreach (var attendee in calendarEvent.Attendees)
+            {
+                soapRequest += $@"
+            <t:Attendee>
+              <t:Mailbox>
+                <t:EmailAddress>{System.Security.SecurityElement.Escape(attendee)}</t:EmailAddress>
+              </t:Mailbox>
+            </t:Attendee>";
+            }
+            soapRequest += @"
+          </t:RequiredAttendees>";
+        }
+
+        // Добавляем UID (стандартное поле для сопоставления)
+        if (!string.IsNullOrEmpty(calendarEvent.Uid))
+        {
+            soapRequest += $@"
+          <t:UID>{System.Security.SecurityElement.Escape(calendarEvent.Uid)}</t:UID>";
+        }
+
+        // Добавляем URL как Extended Property (нет стандартного поля для URL в Exchange)
+        if (!string.IsNullOrEmpty(calendarEvent.Url))
+        {
+            soapRequest += $@"
+          <t:ExtendedProperty>
+            <t:ExtendedFieldURI PropertySetId=""C11FF724-AA03-4555-9952-8FA248A11C3E"" PropertyName=""EventUrl"" PropertyType=""String"" />
+            <t:Value>{System.Security.SecurityElement.Escape(calendarEvent.Url)}</t:Value>
+          </t:ExtendedProperty>";
+        }
+
+        // Добавляем метку CalSync (Extended Property для идентификации наших событий)
+        soapRequest += $@"
+          <t:ExtendedProperty>
+            <t:ExtendedFieldURI PropertySetId=""C11FF724-AA03-4555-9952-8FA248A11C3E"" PropertyName=""CalSync"" PropertyType=""String"" />
+            <t:Value>true</t:Value>
+          </t:ExtendedProperty>";
+
+        soapRequest += @"
         </t:CalendarItem>
-      </Items>
-    </CreateItem>
+      </m:Items>
+    </m:CreateItem>
   </soap:Body>
 </soap:Envelope>";
+
+        return soapRequest;
     }
 
     /// <summary>
@@ -579,6 +656,12 @@ public class ExchangeHttpService : IDisposable
           <t:FieldURI FieldURI=""calendar:Start"" />
           <t:FieldURI FieldURI=""calendar:End"" />
           <t:FieldURI FieldURI=""item:Body"" />
+          <t:FieldURI FieldURI=""calendar:Location"" />
+          <t:FieldURI FieldURI=""calendar:Organizer"" />
+          <t:FieldURI FieldURI=""calendar:RequiredAttendees"" />
+          <t:FieldURI FieldURI=""calendar:UID"" />
+          <t:ExtendedFieldURI PropertySetId=""C11FF724-AA03-4555-9952-8FA248A11C3E"" PropertyName=""CalSync"" PropertyType=""String"" />
+          <t:ExtendedFieldURI PropertySetId=""C11FF724-AA03-4555-9952-8FA248A11C3E"" PropertyName=""EventUrl"" PropertyType=""String"" />
         </t:AdditionalProperties>
       </ItemShape>
       <CalendarView StartDate=""{startTimeUtc}"" EndDate=""{endTimeUtc}"" />
@@ -633,13 +716,47 @@ public class ExchangeHttpService : IDisposable
               </t:CalendarItem>
             </t:SetItemField>";
 
-        if (!string.IsNullOrEmpty(calendarEvent.Description))
-        {
-            soapRequest += $@"
+        // Обновляем описание
+        soapRequest += $@"
             <t:SetItemField>
               <t:FieldURI FieldURI=""item:Body"" />
               <t:CalendarItem>
-                <t:Body BodyType=""Text"">{System.Security.SecurityElement.Escape(calendarEvent.Description)}</t:Body>
+                <t:Body BodyType=""Text"">{System.Security.SecurityElement.Escape(calendarEvent.Description ?? "")}</t:Body>
+              </t:CalendarItem>
+            </t:SetItemField>";
+
+        // Обновляем местоположение
+        soapRequest += $@"
+            <t:SetItemField>
+              <t:FieldURI FieldURI=""calendar:Location"" />
+              <t:CalendarItem>
+                <t:Location>{System.Security.SecurityElement.Escape(calendarEvent.Location ?? "")}</t:Location>
+              </t:CalendarItem>
+            </t:SetItemField>";
+
+        // Обновляем UID (стандартное поле)
+        if (!string.IsNullOrEmpty(calendarEvent.Uid))
+        {
+            soapRequest += $@"
+            <t:SetItemField>
+              <t:FieldURI FieldURI=""calendar:UID"" />
+              <t:CalendarItem>
+                <t:UID>{System.Security.SecurityElement.Escape(calendarEvent.Uid)}</t:UID>
+              </t:CalendarItem>
+            </t:SetItemField>";
+        }
+
+        // Обновляем URL как Extended Property
+        if (!string.IsNullOrEmpty(calendarEvent.Url))
+        {
+            soapRequest += $@"
+            <t:SetItemField>
+              <t:ExtendedFieldURI PropertySetId=""C11FF724-AA03-4555-9952-8FA248A11C3E"" PropertyName=""EventUrl"" PropertyType=""String"" />
+              <t:CalendarItem>
+                <t:ExtendedProperty>
+                  <t:ExtendedFieldURI PropertySetId=""C11FF724-AA03-4555-9952-8FA248A11C3E"" PropertyName=""EventUrl"" PropertyType=""String"" />
+                  <t:Value>{System.Security.SecurityElement.Escape(calendarEvent.Url)}</t:Value>
+                </t:ExtendedProperty>
               </t:CalendarItem>
             </t:SetItemField>";
         }
@@ -704,6 +821,9 @@ public class ExchangeHttpService : IDisposable
             {
                 CalendarEvent currentEvent = null;
                 string currentElementName = "";
+                bool inExtendedProperty = false;
+                bool isCalSyncProperty = false;
+                bool isEventUrlProperty = false;
 
                 while (xmlReader.Read())
                 {
@@ -721,42 +841,92 @@ public class ExchangeHttpService : IDisposable
                                 currentEvent.ExchangeId = xmlReader.GetAttribute("Id");
                                 currentEvent.ExchangeChangeKey = xmlReader.GetAttribute("ChangeKey");
                             }
+                            else if (currentElementName == "ExtendedProperty")
+                            {
+                                inExtendedProperty = true;
+                                isCalSyncProperty = false;
+                                isEventUrlProperty = false;
+                            }
+                            else if (currentElementName == "ExtendedFieldURI" && inExtendedProperty)
+                            {
+                                var propertyName = xmlReader.GetAttribute("PropertyName");
+                                if (propertyName == "CalSync")
+                                {
+                                    isCalSyncProperty = true;
+                                }
+                                else if (propertyName == "EventUrl")
+                                {
+                                    isEventUrlProperty = true;
+                                    isCalSyncProperty = false;
+                                }
+                            }
                             break;
 
                         case System.Xml.XmlNodeType.Text:
                             if (currentEvent != null)
                             {
-                                switch (currentElementName)
+                                if (inExtendedProperty && currentElementName == "Value")
                                 {
-                                    case "Subject":
-                                        currentEvent.Summary = xmlReader.Value;
-                                        break;
-                                    case "Start":
-                                        if (DateTime.TryParse(xmlReader.Value, out var startTime))
-                                        {
-                                            currentEvent.Start = startTime;
-                                        }
-                                        break;
-                                    case "End":
-                                        if (DateTime.TryParse(xmlReader.Value, out var endTime))
-                                        {
-                                            currentEvent.End = endTime;
-                                        }
-                                        break;
-                                    case "Body":
-                                        currentEvent.Description = xmlReader.Value;
-                                        break;
+                                    if (isCalSyncProperty)
+                                    {
+                                        // Нашли метку CalSync - это наше событие
+                                        currentEvent.IsCalSyncEvent = true;
+                                        Console.WriteLine($"🏷️ Найдена метка CalSync в событии");
+                                    }
+                                    else if (isEventUrlProperty)
+                                    {
+                                        // Нашли URL события
+                                        currentEvent.Url = xmlReader.Value;
+                                        Console.WriteLine($"🔗 Найден URL в событии: {xmlReader.Value}");
+                                    }
+                                }
+                                else
+                                {
+                                    switch (currentElementName)
+                                    {
+                                        case "Subject":
+                                            currentEvent.Summary = xmlReader.Value;
+                                            break;
+                                        case "Start":
+                                            if (DateTime.TryParse(xmlReader.Value, out var startTime))
+                                            {
+                                                currentEvent.Start = startTime;
+                                            }
+                                            break;
+                                        case "End":
+                                            if (DateTime.TryParse(xmlReader.Value, out var endTime))
+                                            {
+                                                currentEvent.End = endTime;
+                                            }
+                                            break;
+                                        case "Body":
+                                            currentEvent.Description = xmlReader.Value;
+                                            break;
+                                        case "UID":
+                                            currentEvent.Uid = xmlReader.Value;
+                                            Console.WriteLine($"🔍 Найден UID в Exchange события: {xmlReader.Value}");
+                                            break;
+                                        case "Location":
+                                            currentEvent.Location = xmlReader.Value;
+                                            break;
+                                    }
                                 }
                             }
                             break;
 
                         case System.Xml.XmlNodeType.EndElement:
-                            if (xmlReader.LocalName == "CalendarItem" && currentEvent != null)
+                            if (xmlReader.LocalName == "ExtendedProperty")
+                            {
+                                inExtendedProperty = false;
+                                isCalSyncProperty = false;
+                                isEventUrlProperty = false;
+                            }
+                            else if (xmlReader.LocalName == "CalendarItem" && currentEvent != null)
                             {
                                 if (!string.IsNullOrEmpty(currentEvent.ExchangeId))
                                 {
                                     events.Add(currentEvent);
-                                    Console.WriteLine($"✅ Событие найдено: {currentEvent.Summary} ({currentEvent.ExchangeId?.Substring(0, 20)}...)");
+                                    Console.WriteLine($"✅ Событие найдено: {currentEvent.Summary} ({currentEvent.ExchangeId?.Substring(0, 20)}...) [CalSync: {currentEvent.IsCalSyncEvent}]");
                                 }
                                 currentEvent = null;
                             }

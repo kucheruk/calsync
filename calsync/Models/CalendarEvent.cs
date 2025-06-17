@@ -36,6 +36,11 @@ public class CalendarEvent
     public string Location { get; set; } = string.Empty;
 
     /// <summary>
+    /// URL события
+    /// </summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>
     /// Организатор события
     /// </summary>
     public string Organizer { get; set; } = string.Empty;
@@ -79,6 +84,11 @@ public class CalendarEvent
     /// Exchange ChangeKey события (для обновлений и удаления)
     /// </summary>
     public string ExchangeChangeKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Флаг, указывающий что событие создано приложением CalSync
+    /// </summary>
+    public bool IsCalSyncEvent { get; set; } = false;
 }
 
 /// <summary>

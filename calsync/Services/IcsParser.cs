@@ -121,6 +121,9 @@ public class IcsParser
                 case "LOCATION":
                     calendarEvent.Location = UnescapeText(value);
                     break;
+                case "URL":
+                    calendarEvent.Url = value;
+                    break;
                 case "ORGANIZER":
                     calendarEvent.Organizer = ExtractEmail(value);
                     break;

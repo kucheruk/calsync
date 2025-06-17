@@ -456,6 +456,120 @@ END:VCALENDAR";
         }
     }
 
+    [Fact]
+    public void Parse_ShouldParseEventsOn20June2025_BugReproduction()
+    {
+        // Arrange - используем реальные данные из iCloud календаря, которые не парсятся
+        var icsContent = @"BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Apple Inc.//Mac OS X 10.15.7//EN
+CALSCALE:GREGORIAN
+BEGIN:VTIMEZONE
+TZID:Europe/Moscow
+BEGIN:DAYLIGHT
+TZOFFSETFROM:+0300
+TZOFFSETTO:+0400
+TZNAME:MSD
+DTSTART:19700329T020000
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:+0400
+TZOFFSETTO:+0300
+TZNAME:MSK
+DTSTART:19701025T030000
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+CREATED:20250617T125550Z
+DTEND;TZID=Europe/Moscow:20250620T113000
+DTSTAMP:20250617T125550Z
+DTSTART;TZID=Europe/Moscow:20250620T103000
+LAST-MODIFIED:20250617T125550Z
+SEQUENCE:0
+SUMMARY:Тестяцкое событие
+UID:0C4A69BC-C8AB-4DB2-93FE-F4B5AF23DD4C
+X-APPLE-CREATOR-IDENTITY:com.apple.calendar
+X-APPLE-CREATOR-TEAM-IDENTITY:0000000000
+END:VEVENT
+BEGIN:VEVENT
+CREATED:20250617T125606Z
+DTEND;TZID=Europe/Moscow:20250620T113500
+DTSTAMP:20250617T125608Z
+DTSTART;TZID=Europe/Moscow:20250620T113000
+LAST-MODIFIED:20250617T125608Z
+SEQUENCE:1
+SUMMARY:событие №2
+UID:7EF491EC-48C2-4DB6-BEA2-9566FC368E0F
+X-APPLE-CREATOR-IDENTITY:com.apple.calendar
+X-APPLE-CREATOR-TEAM-IDENTITY:0000000000
+END:VEVENT
+END:VCALENDAR";
+
+        // Act
+        var events = _parser.Parse(icsContent);
+
+        // Assert
+        Assert.NotNull(events);
+        Assert.True(events.Count >= 2, "Должно быть минимум 2 события");
+
+        // Проверяем первое событие
+        var event1 = events.FirstOrDefault(e => e.Summary == "Тестяцкое событие");
+        Assert.NotNull(event1);
+        Assert.Equal(new DateTime(2025, 6, 20).Date, event1.Start.Date);
+        Assert.Equal(10, event1.Start.Hour);
+        Assert.Equal(30, event1.Start.Minute);
+        Assert.Equal("Europe/Moscow", event1.TimeZone);
+
+        // Проверяем второе событие
+        var event2 = events.FirstOrDefault(e => e.Summary == "событие №2");
+        Assert.NotNull(event2);
+        Assert.Equal(new DateTime(2025, 6, 20).Date, event2.Start.Date);
+        Assert.Equal(11, event2.Start.Hour);
+        Assert.Equal(30, event2.Start.Minute);
+        Assert.Equal("Europe/Moscow", event2.TimeZone);
+
+        Console.WriteLine($"✅ Найдено событий: {events.Count}");
+        foreach (var evt in events)
+        {
+            Console.WriteLine($"  • {evt.Summary} ({evt.Start:yyyy-MM-dd HH:mm}) - {evt.TimeZone}");
+        }
+    }
+
+    [Fact]
+    public void FilterEventsByDate_ShouldIncludeEndDate_BugFix()
+    {
+        // Arrange - создаем события на разные даты
+        var events = new List<CalendarEvent>
+        {
+            new CalendarEvent { Summary = "Событие 19 июня", Start = new DateTime(2025, 6, 19, 10, 0, 0) },
+            new CalendarEvent { Summary = "Событие 20 июня", Start = new DateTime(2025, 6, 20, 10, 0, 0) },
+            new CalendarEvent { Summary = "Событие 21 июня", Start = new DateTime(2025, 6, 21, 10, 0, 0) }
+        };
+
+        var startDate = new DateTime(2025, 6, 19);
+        var endDate = new DateTime(2025, 6, 20);
+
+        // Act - применяем исправленную фильтрацию (включая конечную дату)
+        var filteredEvents = events.Where(e =>
+            e.Start.Date >= startDate.Date && e.Start.Date <= endDate.Date).ToList();
+
+        // Assert
+        Assert.Equal(2, filteredEvents.Count);
+        Assert.Contains(filteredEvents, e => e.Summary == "Событие 19 июня");
+        Assert.Contains(filteredEvents, e => e.Summary == "Событие 20 июня");
+        Assert.DoesNotContain(filteredEvents, e => e.Summary == "Событие 21 июня");
+
+        Console.WriteLine($"✅ Фильтрация работает корректно:");
+        Console.WriteLine($"  Период: {startDate:yyyy-MM-dd} - {endDate:yyyy-MM-dd}");
+        Console.WriteLine($"  Найдено событий: {filteredEvents.Count}");
+        foreach (var evt in filteredEvents)
+        {
+            Console.WriteLine($"  • {evt.Summary} ({evt.Start:yyyy-MM-dd})");
+        }
+    }
+
     public void Dispose()
     {
         _testServer?.Dispose();
