@@ -5,7 +5,7 @@ namespace CalSync.Services;
 /// <summary>
 /// Сервис для скачивания ICS файлов
 /// </summary>
-public class IcsDownloader
+public class IcsDownloader : IDisposable
 {
     private readonly HttpClient _httpClient;
 

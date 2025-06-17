@@ -1,4 +1,5 @@
 {
+    "IcsUrl": "https://your-calendar-url.ics",
     "Exchange": {
         "ServiceUrl": "https://exchange.example.com/EWS/Exchange.asmx",
         "Domain": "example.domain",
