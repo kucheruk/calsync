@@ -99,6 +99,100 @@ public class ExchangeHttpService : IDisposable
     }
 
     /// <summary>
+    /// Получить события календаря через SOAP запрос
+    /// </summary>
+    public async Task<List<CalendarEvent>> GetCalendarEventsAsync(DateTime? startDate = null, DateTime? endDate = null)
+    {
+        var events = new List<CalendarEvent>();
+
+        try
+        {
+            Console.WriteLine("📅 Получение событий календаря через SOAP...");
+
+            var start = startDate ?? DateTime.Today;
+            var end = endDate ?? DateTime.Today.AddDays(1);
+
+            Console.WriteLine($"📅 Период: {start:yyyy-MM-dd} - {end:yyyy-MM-dd}");
+
+            var soapRequest = CreateGetCalendarEventsSoapRequest(start, end);
+            var response = await SendSoapRequestAsync(soapRequest);
+
+            Console.WriteLine($"📥 Получен ответ от Exchange ({response.Length} символов)");
+
+            // Парсим ответ и извлекаем события
+            events = ParseCalendarEventsFromResponse(response);
+
+            Console.WriteLine($"✅ Получено событий: {events.Count}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка получения событий: {ex.Message}");
+        }
+
+        return events;
+    }
+
+    /// <summary>
+    /// Обновить событие календаря через прямой SOAP запрос
+    /// </summary>
+    public async Task<bool> UpdateCalendarEventAsync(CalendarEvent calendarEvent)
+    {
+        try
+        {
+            Console.WriteLine($"✏️ Обновление события через SOAP: {calendarEvent.Summary}");
+
+            var soapRequest = CreateUpdateEventSoapRequest(calendarEvent);
+            var response = await SendSoapRequestAsync(soapRequest);
+
+            if (response.Contains("Success"))
+            {
+                Console.WriteLine("✅ Событие обновлено успешно");
+                return true;
+            }
+            else
+            {
+                Console.WriteLine($"❌ Ошибка обновления: {ExtractErrorFromResponse(response)}");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ КРИТИЧЕСКАЯ ОШИБКА обновления события: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Удалить событие календаря через прямой SOAP запрос
+    /// </summary>
+    public async Task<bool> DeleteCalendarEventAsync(string eventId)
+    {
+        try
+        {
+            Console.WriteLine($"🗑️ Удаление события через SOAP: {eventId}");
+
+            var soapRequest = CreateDeleteEventSoapRequest(eventId);
+            var response = await SendSoapRequestAsync(soapRequest);
+
+            if (response.Contains("Success"))
+            {
+                Console.WriteLine("✅ Событие удалено успешно");
+                return true;
+            }
+            else
+            {
+                Console.WriteLine($"❌ Ошибка удаления: {ExtractErrorFromResponse(response)}");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ КРИТИЧЕСКАЯ ОШИБКА удаления события: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Создать событие календаря через прямой SOAP запрос
     /// </summary>
     public async Task<string> CreateCalendarEventAsync(CalendarEvent calendarEvent)
@@ -339,6 +433,199 @@ public class ExchangeHttpService : IDisposable
         {
             return "Не удалось извлечь описание ошибки";
         }
+    }
+
+    /// <summary>
+    /// Создать SOAP запрос для получения событий календаря
+    /// </summary>
+    private string CreateGetCalendarEventsSoapRequest(DateTime startDate, DateTime endDate)
+    {
+        var startTimeUtc = FormatTimeForExchange(startDate, "UTC");
+        var endTimeUtc = FormatTimeForExchange(endDate, "UTC");
+
+        var soapRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance""
+               xmlns:xsd=""http://www.w3.org/2001/XMLSchema""
+               xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
+               xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
+  <soap:Header>
+    <t:RequestServerVersion Version=""Exchange2016_SP1"" />
+  </soap:Header>
+  <soap:Body>
+    <FindItem Traversal=""Shallow"" xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"">
+      <ItemShape>
+        <t:BaseShape>AllProperties</t:BaseShape>
+      </ItemShape>
+      <CalendarView StartDate=""{startTimeUtc}"" EndDate=""{endTimeUtc}"" />
+      <ParentFolderIds>
+        <t:DistinguishedFolderId Id=""calendar"" />
+      </ParentFolderIds>
+    </FindItem>
+  </soap:Body>
+</soap:Envelope>";
+
+        return soapRequest;
+    }
+
+    /// <summary>
+    /// Создать SOAP запрос для обновления события
+    /// </summary>
+    private string CreateUpdateEventSoapRequest(CalendarEvent calendarEvent)
+    {
+        var startTimeUtc = FormatTimeForExchange(calendarEvent.Start, calendarEvent.TimeZone ?? "UTC");
+        var endTimeUtc = FormatTimeForExchange(calendarEvent.End, calendarEvent.TimeZone ?? "UTC");
+
+        var soapRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance""
+               xmlns:xsd=""http://www.w3.org/2001/XMLSchema""
+               xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
+               xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
+  <soap:Header>
+    <t:RequestServerVersion Version=""Exchange2016_SP1"" />
+  </soap:Header>
+  <soap:Body>
+    <UpdateItem MessageDisposition=""SaveOnly"" ConflictResolution=""AutoResolve"" xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"">
+      <ItemChanges>
+        <t:ItemChange>
+          <t:ItemId Id=""{calendarEvent.ExchangeId}"" />
+          <t:Updates>
+            <t:SetItemField>
+              <t:FieldURI FieldURI=""item:Subject"" />
+              <t:CalendarItem>
+                <t:Subject>{System.Security.SecurityElement.Escape(calendarEvent.Summary)}</t:Subject>
+              </t:CalendarItem>
+            </t:SetItemField>
+            <t:SetItemField>
+              <t:FieldURI FieldURI=""calendar:Start"" />
+              <t:CalendarItem>
+                <t:Start>{startTimeUtc}</t:Start>
+              </t:CalendarItem>
+            </t:SetItemField>
+            <t:SetItemField>
+              <t:FieldURI FieldURI=""calendar:End"" />
+              <t:CalendarItem>
+                <t:End>{endTimeUtc}</t:End>
+              </t:CalendarItem>
+            </t:SetItemField>";
+
+        if (!string.IsNullOrEmpty(calendarEvent.Description))
+        {
+            soapRequest += $@"
+            <t:SetItemField>
+              <t:FieldURI FieldURI=""item:Body"" />
+              <t:CalendarItem>
+                <t:Body BodyType=""Text"">{System.Security.SecurityElement.Escape(calendarEvent.Description)}</t:Body>
+              </t:CalendarItem>
+            </t:SetItemField>";
+        }
+
+        soapRequest += @"
+          </t:Updates>
+        </t:ItemChange>
+      </ItemChanges>
+    </UpdateItem>
+  </soap:Body>
+</soap:Envelope>";
+
+        return soapRequest;
+    }
+
+    /// <summary>
+    /// Создать SOAP запрос для удаления события
+    /// </summary>
+    private string CreateDeleteEventSoapRequest(string eventId)
+    {
+        var soapRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance""
+               xmlns:xsd=""http://www.w3.org/2001/XMLSchema""
+               xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/""
+               xmlns:t=""http://schemas.microsoft.com/exchange/services/2006/types"">
+  <soap:Header>
+    <t:RequestServerVersion Version=""Exchange2016_SP1"" />
+  </soap:Header>
+  <soap:Body>
+    <DeleteItem DeleteType=""HardDelete"" xmlns=""http://schemas.microsoft.com/exchange/services/2006/messages"">
+      <ItemIds>
+        <t:ItemId Id=""{eventId}"" />
+      </ItemIds>
+    </DeleteItem>
+  </soap:Body>
+</soap:Envelope>";
+
+        return soapRequest;
+    }
+
+    /// <summary>
+    /// Парсинг событий из SOAP ответа
+    /// </summary>
+    private List<CalendarEvent> ParseCalendarEventsFromResponse(string response)
+    {
+        var events = new List<CalendarEvent>();
+
+        try
+        {
+            // Простой парсинг XML ответа без XmlDocument для избежания проблем
+            var lines = response.Split('\n');
+            CalendarEvent currentEvent = null;
+
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+
+                if (trimmedLine.Contains("<t:CalendarItem>") || trimmedLine.Contains("<CalendarItem"))
+                {
+                    currentEvent = new CalendarEvent();
+                }
+                else if (currentEvent != null && (trimmedLine.Contains("</t:CalendarItem>") || trimmedLine.Contains("</CalendarItem")))
+                {
+                    if (currentEvent != null && !string.IsNullOrEmpty(currentEvent.ExchangeId))
+                    {
+                        events.Add(currentEvent);
+                    }
+                    currentEvent = null;
+                }
+                else if (currentEvent != null)
+                {
+                    // Парсим свойства события
+                    if (trimmedLine.Contains("<t:ItemId") && trimmedLine.Contains("Id=\""))
+                    {
+                        var idStart = trimmedLine.IndexOf("Id=\"") + 4;
+                        var idEnd = trimmedLine.IndexOf("\"", idStart);
+                        if (idEnd > idStart)
+                        {
+                            currentEvent.ExchangeId = trimmedLine.Substring(idStart, idEnd - idStart);
+                        }
+                    }
+                    else if (trimmedLine.StartsWith("<t:Subject>") && trimmedLine.EndsWith("</t:Subject>"))
+                    {
+                        currentEvent.Summary = trimmedLine.Replace("<t:Subject>", "").Replace("</t:Subject>", "").Trim();
+                    }
+                    else if (trimmedLine.StartsWith("<t:Start>") && trimmedLine.EndsWith("</t:Start>"))
+                    {
+                        var timeStr = trimmedLine.Replace("<t:Start>", "").Replace("</t:Start>", "").Trim();
+                        if (DateTime.TryParse(timeStr, out var startTime))
+                        {
+                            currentEvent.Start = startTime;
+                        }
+                    }
+                    else if (trimmedLine.StartsWith("<t:End>") && trimmedLine.EndsWith("</t:End>"))
+                    {
+                        var timeStr = trimmedLine.Replace("<t:End>", "").Replace("</t:End>", "").Trim();
+                        if (DateTime.TryParse(timeStr, out var endTime))
+                        {
+                            currentEvent.End = endTime;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка парсинга событий: {ex.Message}");
+            Console.WriteLine($"📝 Ответ: {response.Substring(0, Math.Min(500, response.Length))}...");
+        }
+
+        return events;
     }
 
     public void Dispose()
