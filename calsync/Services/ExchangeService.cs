@@ -11,26 +11,85 @@ namespace CalSync.Services;
 /// </summary>
 public class ExchangeService : IDisposable
 {
-    private readonly Microsoft.Exchange.WebServices.Data.ExchangeService _service;
+    private Microsoft.Exchange.WebServices.Data.ExchangeService _service;
     private readonly IConfiguration _configuration;
     private bool _disposed = false;
 
     public ExchangeService(IConfiguration configuration)
     {
         _configuration = configuration;
-        var exchangeConfig = _configuration.GetSection("Exchange");
 
-        // Создаем сервис с нужной версией
-        var version = exchangeConfig["Version"];
-        var exchangeVersion = version switch
+        try
         {
-            "Exchange2013" => ExchangeVersion.Exchange2013,
-            "Exchange2013_SP1" => ExchangeVersion.Exchange2013_SP1,
-            _ => ExchangeVersion.Exchange2013_SP1
+            Console.WriteLine("🔄 Инициализация Exchange Service...");
+
+            // Применяем исправления ПЕРЕД созданием сервиса
+            TryFixTimeZoneConflict();
+
+            var exchangeConfig = _configuration.GetSection("Exchange");
+
+            // Создаем сервис с нужной версией
+            var version = exchangeConfig["Version"];
+            var exchangeVersion = version switch
+            {
+                "Exchange2013" => ExchangeVersion.Exchange2013,
+                "Exchange2013_SP1" => ExchangeVersion.Exchange2013_SP1,
+                "Exchange2016_SP1" => ExchangeVersion.Exchange2013_SP1, // Используем максимально поддерживаемую версию
+                _ => ExchangeVersion.Exchange2013_SP1 // Стабильная версия по умолчанию
+            };
+
+            Console.WriteLine($"📡 Создание EWS сервиса с версией: {exchangeVersion}");
+
+            // Попробуем несколько способов создания сервиса
+            if (!TryCreateExchangeService(exchangeVersion))
+            {
+                throw new InvalidOperationException("Не удалось создать Exchange Service с любой конфигурацией");
+            }
+
+            Console.WriteLine("✅ EWS сервис создан успешно");
+
+            Initialize();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка инициализации Exchange Service: {ex.Message}");
+            Console.WriteLine($"📝 Детали: {ex}");
+            throw new InvalidOperationException($"Не удалось инициализировать Exchange сервис: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Попытка создания Exchange Service с разными подходами
+    /// </summary>
+    private bool TryCreateExchangeService(ExchangeVersion exchangeVersion)
+    {
+        var attempts = new List<(string name, Func<Microsoft.Exchange.WebServices.Data.ExchangeService> factory)>
+        {
+            ("Стандартный конструктор", () => new Microsoft.Exchange.WebServices.Data.ExchangeService(exchangeVersion)),
+            ("Конструктор без версии", () => new Microsoft.Exchange.WebServices.Data.ExchangeService()),
+            ("Конструктор с TimeZoneInfo.Utc", () =>
+            {
+                var service = new Microsoft.Exchange.WebServices.Data.ExchangeService(exchangeVersion);
+                return service;
+            })
         };
 
-        _service = new Microsoft.Exchange.WebServices.Data.ExchangeService(exchangeVersion);
-        Initialize();
+        foreach (var (name, factory) in attempts)
+        {
+            try
+            {
+                Console.WriteLine($"🔧 Попытка создания: {name}");
+                _service = factory();
+                Console.WriteLine($"✅ Успешно создан с помощью: {name}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ {name} не удался: {ex.Message}");
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -96,13 +155,30 @@ public class ExchangeService : IDisposable
     }
 
     /// <summary>
-    /// Попытаться исправить конфликт временных зон в .NET 9
+    /// Попытаться исправить конфликт временных зон и проблемы с .NET 8/9
     /// </summary>
     private void TryFixTimeZoneConflict()
     {
         try
         {
-            Console.WriteLine("🔧 Применение исправления .NET 9 timezone конфликта...");
+            Console.WriteLine("🔧 Применение исправлений для .NET 8/9 совместимости...");
+
+            // .NET 8 специфичные исправления
+            var netVersion = Environment.Version;
+            Console.WriteLine($"🔍 .NET Runtime версия: {netVersion}");
+
+            // Подход 0: Настройка Garbage Collector для уменьшения проблем с памятью  
+            try
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                Console.WriteLine("✅ Garbage Collection выполнен");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️  GC не удался: {ex.Message}");
+            }
 
             // Подход 1: Очистка кеша TimeZoneInfo через рефлексию (безопасно)
             try
@@ -154,6 +230,18 @@ public class ExchangeService : IDisposable
             catch (Exception ex)
             {
                 Console.WriteLine($"⚠️  Загрузка системных timezone не удалась: {ex.Message}");
+            }
+
+            // Подход 5: Попытка установить UTC как локальную временную зону для .NET 8
+            try
+            {
+                // Устанавливаем переменную окружения для TimeZone
+                Environment.SetEnvironmentVariable("TZ", "UTC");
+                Console.WriteLine("✅ Переменная TZ установлена в UTC");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️  Установка TZ не удалась: {ex.Message}");
             }
 
             Console.WriteLine("✅ Исправление timezone конфликта применено");

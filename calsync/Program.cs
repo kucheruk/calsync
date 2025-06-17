@@ -37,29 +37,41 @@ class Program
             var startDate = targetDate.Date;
             var endDate = targetDate.Date.AddDays(1);
 
+            // Проверяем режим отладки
+            var skipExchange = configuration.GetValue<bool>("CalSync:SkipExchangeConnection", false);
+            var debugMode = configuration.GetValue<bool>("CalSync:DebugMode", false);
+
             // Создаем сервисы
-            using var exchangeService = new ExchangeService(configuration);
             using var icsDownloader = new IcsDownloader();
             var icsParser = new IcsParser();
 
-            // Тестируем подключение к Exchange
+            if (skipExchange || debugMode)
+            {
+                Console.WriteLine("🧪 Запуск в отладочном режиме - только загрузка ICS календаря");
+                Console.WriteLine("🔍 Exchange подключение пропущено для совместимости с .NET 8");
+
+                // Работаем только с ICS календарем
+                await ProcessIcsOnlyAsync(icsDownloader, icsParser, icsUrl, startDate, endDate);
+                return;
+            }
+
+            using var exchangeHttpService = new ExchangeHttpService(configuration);
+
+            // Тестируем подключение к Exchange через HTTP
             Console.WriteLine("\n🔍 Проверка подключения к Exchange...");
-            var connectionResult = await exchangeService.TestConnectionAsync();
+            var connectionResult = await exchangeHttpService.TestConnectionAsync();
 
             if (!connectionResult)
             {
                 Console.WriteLine("❌ Не удалось подключиться к Exchange.");
-                Console.WriteLine("🧪 Запускаем тестовый режим для проверки timezone исправлений...");
-
-                // Тестовый режим: проверяем только создание событий без Exchange
-                await TestTimezoneFixesAsync(icsDownloader, icsParser, exchangeService, icsUrl, startDate, endDate);
+                Console.WriteLine("🛑 КРИТИЧЕСКАЯ ОШИБКА: Программа не может работать без подключения к Exchange");
                 return;
             }
 
             Console.WriteLine($"\n📊 Период синхронизации: {startDate:yyyy-MM-dd} - {endDate:yyyy-MM-dd}");
 
-            // Выполняем синхронизацию
-            await PerformSyncAsync(icsDownloader, icsParser, exchangeService, icsUrl, startDate, endDate);
+            // Выполняем реальную синхронизацию через HTTP
+            await DemonstrateExchangeEventCreationAsync(icsDownloader, icsParser, exchangeHttpService, icsUrl, startDate, endDate);
 
             Console.WriteLine("\n✅ Синхронизация завершена!");
         }
@@ -308,6 +320,178 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine($"❌ Критическая ошибка синхронизации: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Создание события через Exchange HTTP Service
+    /// </summary>
+    private static async Task DemonstrateExchangeEventCreationAsync(
+        IcsDownloader icsDownloader,
+        IcsParser icsParser,
+        ExchangeHttpService exchangeHttpService,
+        string icsUrl,
+        DateTime startDate,
+        DateTime endDate)
+    {
+        try
+        {
+            Console.WriteLine("\n🔄 Реальное создание событий через Exchange HTTP API");
+            Console.WriteLine("".PadRight(50, '='));
+
+            // Шаг 1: Загружаем и парсим ICS календарь
+            Console.WriteLine("\n📥 Загрузка ICS календаря...");
+            var icsContent = await icsDownloader.DownloadAsync(icsUrl);
+            var icsEvents = icsParser.Parse(icsContent);
+
+            // Фильтруем события по периоду
+            var filteredEvents = icsEvents.Where(e =>
+                e.Start.Date >= startDate.Date && e.Start.Date < endDate.Date).ToList();
+
+            Console.WriteLine($"📊 Всего событий в календаре: {icsEvents.Count}");
+            Console.WriteLine($"🎯 События в целевом периоде ({startDate:yyyy-MM-dd} - {endDate:yyyy-MM-dd}): {filteredEvents.Count}");
+
+            // Показываем найденные события
+            if (filteredEvents.Any())
+            {
+                Console.WriteLine("\n📋 События для синхронизации:");
+                foreach (var evt in filteredEvents)
+                {
+                    Console.WriteLine($"  📅 {evt.Start:yyyy-MM-dd HH:mm} - {evt.End:HH:mm}");
+                    Console.WriteLine($"     📝 {evt.Summary}");
+                    if (!string.IsNullOrEmpty(evt.Location))
+                        Console.WriteLine($"     📍 {evt.Location}");
+                    Console.WriteLine();
+                }
+
+                // Шаг 2: Создаем события в реальном Exchange
+                Console.WriteLine("🔄 Создание событий в Exchange через SOAP API...");
+
+                foreach (var evt in filteredEvents)
+                {
+                    Console.WriteLine($"\n➕ Создание события: {evt.Summary}");
+
+                    try
+                    {
+                        var eventId = await exchangeHttpService.CreateCalendarEventAsync(evt);
+                        Console.WriteLine($"   ✅ Событие создано с ID: {eventId}");
+
+                        // Небольшая задержка между созданием событий
+                        await Task.Delay(1000);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"   ❌ ОШИБКА создания события: {ex.Message}");
+                        // НЕ ПРОДОЛЖАЕМ если есть критическая ошибка
+                        throw;
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine("ℹ️  Нет событий в указанном периоде для синхронизации");
+            }
+
+            Console.WriteLine("\n✅ Создание событий завершено!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка демонстрации: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Обработать только ICS календарь без Exchange (отладочный режим)
+    /// </summary>
+    private static async Task ProcessIcsOnlyAsync(
+        IcsDownloader icsDownloader,
+        IcsParser icsParser,
+        string icsUrl,
+        DateTime startDate,
+        DateTime endDate)
+    {
+        try
+        {
+            Console.WriteLine("\n🔄 Загрузка и анализ ICS календаря...");
+            Console.WriteLine("".PadRight(50, '='));
+
+            // Шаг 1: Загружаем и парсим ICS календарь
+            Console.WriteLine("\n📥 Загрузка ICS календаря...");
+            var icsContent = await icsDownloader.DownloadAsync(icsUrl);
+
+            Console.WriteLine($"📊 Размер загруженных данных: {icsContent.Length} символов");
+
+            // Сохраняем raw содержимое для анализа
+            var debugFileName = $"ics_debug_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+            await File.WriteAllTextAsync(debugFileName, icsContent);
+            Console.WriteLine($"🔍 Raw ICS данные сохранены в: {debugFileName}");
+
+            var icsEvents = icsParser.Parse(icsContent);
+
+            // Фильтруем события по периоду
+            var filteredIcsEvents = icsEvents.Where(e =>
+                e.Start.Date >= startDate.Date && e.Start.Date < endDate.Date).ToList();
+
+            Console.WriteLine($"✅ Загружено ICS событий: {icsEvents.Count}");
+            Console.WriteLine($"📅 В указанном периоде ({startDate:yyyy-MM-dd} - {endDate:yyyy-MM-dd}): {filteredIcsEvents.Count}");
+
+            // Показываем все события для анализа
+            if (icsEvents.Any())
+            {
+                Console.WriteLine("\n📋 ВСЕ события из ICS календаря:");
+                foreach (var evt in icsEvents.OrderBy(e => e.Start))
+                {
+                    Console.WriteLine($"  • {evt.Start:yyyy-MM-dd HH:mm} - {evt.Summary}");
+                    if (!string.IsNullOrEmpty(evt.Location))
+                        Console.WriteLine($"    📍 {evt.Location}");
+                }
+            }
+
+            // Показываем события в целевом периоде
+            if (filteredIcsEvents.Any())
+            {
+                Console.WriteLine($"\n🎯 События на {startDate:yyyy-MM-dd}:");
+                foreach (var evt in filteredIcsEvents)
+                {
+                    Console.WriteLine($"  • {evt.Start:yyyy-MM-dd HH:mm} - {evt.End:HH:mm}: {evt.Summary}");
+                    if (!string.IsNullOrEmpty(evt.Location))
+                        Console.WriteLine($"    📍 {evt.Location}");
+                    if (!string.IsNullOrEmpty(evt.Description))
+                        Console.WriteLine($"    📝 {evt.Description}");
+                }
+
+                // Записываем события для mock-тестов
+                var mockData = new
+                {
+                    Date = startDate.ToString("yyyy-MM-dd"),
+                    Events = filteredIcsEvents.Select(e => new
+                    {
+                        Summary = e.Summary,
+                        Start = e.Start.ToString("yyyy-MM-dd HH:mm:ss"),
+                        End = e.End.ToString("yyyy-MM-dd HH:mm:ss"),
+                        Location = e.Location,
+                        Description = e.Description,
+                        Uid = e.Uid
+                    }).ToArray()
+                };
+
+                var mockFileName = $"mock_events_{DateTime.Now:yyyyMMdd_HHmmss}.json";
+                var mockJson = System.Text.Json.JsonSerializer.Serialize(mockData, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                await File.WriteAllTextAsync(mockFileName, mockJson);
+                Console.WriteLine($"🧪 Mock данные для тестов сохранены в: {mockFileName}");
+            }
+            else
+            {
+                Console.WriteLine($"❌ На {startDate:yyyy-MM-dd} событий не найдено");
+            }
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка обработки ICS: {ex.Message}");
+            Console.WriteLine($"📝 Детали: {ex}");
             throw;
         }
     }
